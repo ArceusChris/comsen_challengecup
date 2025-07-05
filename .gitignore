@@ -3,7 +3,6 @@
 .env.local
 
 # 工作区文件
-workspace/
 models/
 
 # 日志文件
