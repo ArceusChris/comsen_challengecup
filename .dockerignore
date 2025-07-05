@@ -1,0 +1,11 @@
+.dockerignore
+workspace/
+models/
+*.bag
+*.log
+.git/
+.gitignore
+README.md
+docker-compose.yml
+setup.sh
+start_simulation.sh
