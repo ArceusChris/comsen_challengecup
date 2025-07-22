@@ -8,8 +8,10 @@
 - 支持三种目标类型：red, yellow, white
 - 通过相机内参和无人机位姿计算物体世界坐标
 - 自动维护每种目标的历史位置点集
+- **发布PointCloud2格式的点云数据，支持RViz可视化**
 - 可视化检测结果和统计信息
 - 支持数据导出和分析
+- 自动管理点云数据（限制点数、删除过期点）
 
 ## 文件说明
 
@@ -19,6 +21,7 @@
 - `point_set_viewer.py` - 点集数据查看和分析工具
 - `camera_transform_config.py` - 相机变换参数配置工具
 - `test_downward_camera.py` - 正下方相机配置验证工具
+- `generate_rviz_config.py` - RViz点云可视化配置生成器
 
 ### 依赖要求
 ```bash
@@ -84,6 +87,11 @@ rostopic echo /iris_0/mavros/local_position/pose
 
 # 查看相机内参
 rostopic echo /iris_0/camera/camera_info
+
+# 查看点云数据
+rostopic echo /yolo11/pointcloud/red
+rostopic echo /yolo11/pointcloud/yellow  
+rostopic echo /yolo11/pointcloud/white
 ```
 
 ### 7. 数据分析
@@ -100,6 +108,15 @@ cd /root/workspace/perception
 python3 test_downward_camera.py
 ```
 该工具会测试坐标转换的准确性，确保配置正确。
+
+### 9. RViz点云可视化
+生成并使用RViz配置文件来可视化点云数据：
+```bash
+cd /root/workspace/perception
+python3 generate_rviz_config.py
+rviz -d yolo11_pointcloud_visualization.rviz
+```
+可以看到三种颜色的球体分别代表red、yellow、white目标的历史位置。
 
 ## 节点参数配置
 
@@ -122,6 +139,11 @@ yolo11_inference_node:
     [0, 0, -1]    # 相机Z轴 -> 无人机-Z轴（向下）
   ]
   camera_translation: [0.0, 0.0, -0.03]           # 相机位于无人机正下方0.03m处
+  
+  # 点云发布参数
+  publish_pointcloud: true                         # 是否发布点云数据
+  pointcloud_frame_id: "map"                      # 点云坐标系
+  max_points_per_cloud: 1000                      # 每个点云最大点数
 ```
 
 ## 相机变换参数配置
@@ -186,6 +208,28 @@ python3 camera_transform_config.py
 }
 ```
 
+## 点云数据格式
+
+系统为每个目标类型发布独立的PointCloud2消息：
+
+**话题列表：**
+- `/yolo11/pointcloud/red` - 红色目标点云
+- `/yolo11/pointcloud/yellow` - 黄色目标点云  
+- `/yolo11/pointcloud/white` - 白色目标点云
+
+**点云字段：**
+```
+- x, y, z: 世界坐标位置 (FLOAT32)
+- timestamp: 检测时间戳 (FLOAT64)
+- intensity: 目标类型标识 (FLOAT32, red=1.0, yellow=2.0, white=3.0)
+```
+
+**点云特性：**
+- 坐标系：`map` (世界坐标系)
+- 更新频率：检测时实时更新 + 定时发布(2Hz)
+- 点数限制：每个点云最大1000个点
+- 自动管理：删除过期点（默认5分钟）
+
 ## 故障排除
 
 ### 常见问题
@@ -211,6 +255,12 @@ python3 camera_transform_config.py
    - 使用相机配置工具调整变换矩阵
    - 验证目标是否在地面上
 
+5. **点云数据问题**
+   - 确认RViz中Fixed Frame设置为"map"
+   - 检查点云话题是否正常发布
+   - 验证点云数据是否有效（非空）
+   - 调整RViz中点的大小和颜色以便观察
+
 ### 调试命令
 
 ```bash
@@ -223,6 +273,11 @@ rosnode info /yolo11_inference_node
 
 # 检查图像数据
 rqt_image_view  # 图形界面查看图像
+
+# 检查点云数据
+rostopic list | grep pointcloud
+rostopic info /yolo11/pointcloud/red
+rostopic hz /yolo11/pointcloud/red  # 检查发布频率
 ```
 
 ## 扩展功能
