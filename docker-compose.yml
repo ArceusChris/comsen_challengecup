@@ -3,7 +3,7 @@ version: '3.8'
 services:
   drone_sim:
     build: .
-    container_name: drone_challenge_sim
+    container_name: drone
     environment:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1

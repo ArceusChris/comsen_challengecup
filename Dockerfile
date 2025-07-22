@@ -73,6 +73,7 @@ RUN apt-get update && apt-get install -y \
 
 # 安装Python依赖
 RUN pip3 install --upgrade pip setuptools wheel
+RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 # 修复importlib_metadata版本兼容性问题
 RUN pip3 install "importlib_metadata<5.0"
 RUN pip3 install \

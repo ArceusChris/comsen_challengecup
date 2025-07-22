@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- YOLO11推理节点 -->
+    <node name="yolo11_inference" pkg="perception" type="yolo11_inference.py" output="screen">
+        <!-- 输入图像话题 -->
+        <param name="input_topic" value="/iris_0/camera/image_raw" />
+        
+        <!-- 输出图像话题 -->
+        <param name="output_topic" value="/iris_0/camera/detection_image" />
+        
+        <!-- 模型路径（相对于perception包目录或绝对路径） -->
+        <param name="model_path" value="$(find perception)/models/yolo11n.pt" />
+        
+        <!-- 置信度阈值 -->
+        <param name="confidence_threshold" value="0.5" />
+        
+        <!-- IOU阈值 -->
+        <param name="iou_threshold" value="0.45" />
+    </node>
+    
+    <!-- 可选：启动image_view来显示检测结果 -->
+    <node name="detection_viewer" pkg="image_view" type="image_view" output="screen">
+        <remap from="image" to="/yolo11/detection_image" />
+    </node>
+</launch>
