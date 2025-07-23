@@ -1,6 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+颜色检测参数说明：
+
+检测方法选择：
+    detection_method: 'yolo' 或 'color'
+    - 'yolo': 使用YOLO模型检测
+    - 'color': 使用颜色阈值检测
+
+颜色阈值检测参数：
+    min_contour_area: 最小轮廓面积，过滤小的噪声区域
+    morphology_kernel_size: 形态学操作核大小，用于去噪
+    gaussian_blur_size: 高斯模糊核大小，预处理减少噪声
+
+HSV颜色范围：
+    红色 (red): H=[0,10] 或 [170,180], S=[50,255], V=[50,255]
+    黄色 (yellow): H=[20,30], S=[50,255], V=[50,255] 
+    白色 (white): H=[0,180], S=[0,30], V=[200,255]
+
+使用示例：
+    rosrun your_package yolo11_inference.py _detection_method:=color
+    rosrun your_package yolo11_inference.py _detection_method:=yolo
+"""
+
 import rospy
 import cv2
 import numpy as np
@@ -32,6 +55,35 @@ class YOLO11InferenceNode:
         self.confidence_threshold = rospy.get_param('~confidence_threshold', 0.5)
         self.iou_threshold = rospy.get_param('~iou_threshold', 0.45)
         
+        # 检测方法选择参数
+        self.detection_method = rospy.get_param('~detection_method', 'color')  # 'yolo' 或 'color'
+        
+        # 颜色阈值检测参数
+        self.color_detection_params = {
+            'min_contour_area': rospy.get_param('~min_contour_area', 500),  # 最小轮廓面积
+            'morphology_kernel_size': rospy.get_param('~morphology_kernel_size', 5),  # 形态学操作核大小
+            'gaussian_blur_size': rospy.get_param('~gaussian_blur_size', 5),  # 高斯模糊核大小
+        }
+        
+        # HSV颜色阈值范围
+        self.color_ranges = {
+            'red': {
+                # 红色在HSV中有两个范围（因为红色在色调环的两端）
+                'lower1': np.array([0, 50, 50]),
+                'upper1': np.array([10, 255, 255]),
+                'lower2': np.array([170, 50, 50]),
+                'upper2': np.array([180, 255, 255])
+            },
+            'yellow': {
+                'lower': np.array([20, 50, 50]),
+                'upper': np.array([30, 255, 255])
+            },
+            'white': {
+                'lower': np.array([0, 0, 200]),
+                'upper': np.array([180, 30, 255])
+            }
+        }
+        
         # 点云发布参数
         self.pointcloud_frame_id = rospy.get_param('~pointcloud_frame_id', 'map')
         self.max_points_per_cloud = rospy.get_param('~max_points_per_cloud', 1000)  # 每个点云最大点数
@@ -52,8 +104,16 @@ class YOLO11InferenceNode:
         # 相机变换参数
         self.camera_transform_params = self.get_camera_transform_params()
         
-        # 加载YOLO11模型
-        self.load_model()
+        # 根据检测方法加载相应资源
+        if self.detection_method == 'yolo':
+            # 加载YOLO11模型
+            self.load_model()
+            # 获取类别名称
+            self.class_names = self.model.names
+        else:
+            # 颜色检测模式，定义类别名称
+            self.model = None
+            self.class_names = {0: 'red', 1: 'yellow', 2: 'white'}
         
         # 创建发布者和订阅者
         self.image_pub = rospy.Publisher(self.output_topic, Image, queue_size=1)
@@ -73,13 +133,17 @@ class YOLO11InferenceNode:
             self.pointcloud_timer = rospy.Timer(rospy.Duration(0.5), self.pointcloud_timer_callback)  # 2Hz发布
         
         rospy.loginfo(f"YOLO11推理节点已启动")
+        rospy.loginfo(f"检测方法: {self.detection_method}")
         rospy.loginfo(f"订阅话题: {self.input_topic}")
         rospy.loginfo(f"发布话题: {self.output_topic}")
         rospy.loginfo(f"位姿话题: {self.pose_topic}")
         rospy.loginfo(f"相机内参话题: {self.camera_info_topic}")
-        rospy.loginfo(f"模型路径: {self.model_path}")
-        rospy.loginfo(f"置信度阈值: {self.confidence_threshold}")
-        rospy.loginfo(f"IOU阈值: {self.iou_threshold}")
+        if self.detection_method == 'yolo':
+            rospy.loginfo(f"模型路径: {self.model_path}")
+            rospy.loginfo(f"置信度阈值: {self.confidence_threshold}")
+            rospy.loginfo(f"IOU阈值: {self.iou_threshold}")
+        else:
+            rospy.loginfo(f"颜色检测参数: {self.color_detection_params}")
         rospy.loginfo(f"点云坐标系: {self.pointcloud_frame_id}")
         rospy.loginfo(f"每个点云最大点数: {self.max_points_per_cloud}")
         
@@ -109,10 +173,17 @@ class YOLO11InferenceNode:
             # 将ROS图像消息转换为OpenCV格式
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             
-            # 运行YOLO11推理
-            results = self.model(cv_image, 
-                               conf=self.confidence_threshold, 
-                               iou=self.iou_threshold)
+            # 根据检测方法运行不同的推理
+            if self.detection_method == 'yolo':
+                # 运行YOLO11推理
+                results = self.model(cv_image, 
+                                   conf=self.confidence_threshold, 
+                                   iou=self.iou_threshold)
+                result = results[0]
+            else:
+                # 运行颜色阈值检测
+                detections = self.detect_by_color(cv_image)
+                result = self.create_color_detection_result(detections)
             
             # 获取当前位姿和相机内参
             with self.data_lock:
@@ -120,10 +191,10 @@ class YOLO11InferenceNode:
                 current_camera_info = self.camera_info
             
             # 处理检测结果并更新点集
-            self.process_detections_and_update_points(results[0], current_pose, current_camera_info)
+            self.process_detections_and_update_points(result, current_pose, current_camera_info)
             
             # 绘制检测结果
-            annotated_image = self.draw_detections(cv_image, results[0])
+            annotated_image = self.draw_detections(cv_image, result)
             
             # 将处理后的图像转换回ROS消息格式并发布
             output_msg = self.bridge.cv2_to_imgmsg(annotated_image, "bgr8")
@@ -177,7 +248,7 @@ class YOLO11InferenceNode:
             
             # 在图像上显示检测数量信息
             detection_count = len(boxes)
-            count_text = f"检测到 {detection_count} 个目标"
+            count_text = f"检测到 {detection_count} 个目标 ({self.detection_method})"
             cv2.putText(annotated_image, count_text, 
                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                        0.7, (0, 255, 0), 2, cv2.LINE_AA)
@@ -302,7 +373,11 @@ class YOLO11InferenceNode:
         # 处理每个检测到的物体
         for box, class_id in zip(boxes, class_ids):
             # 获取类别名称
-            class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"Class_{class_id}"
+            if self.detection_method == 'yolo':
+                class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"Class_{class_id}"
+            else:
+                # 颜色检测模式，直接根据class_id映射
+                class_name = self.class_names.get(class_id, f"Class_{class_id}")
             
             # 只处理我们关心的三个目标
             if class_name not in ['red', 'yellow', 'white']:
@@ -518,6 +593,170 @@ class YOLO11InferenceNode:
             rospy.loginfo(f"删除了 {removed_count} 个过期点")
             # 发布更新后的点云
             self.publish_pointclouds()
+    
+    def detect_by_color(self, image):
+        """使用颜色阈值检测目标"""
+        # 转换到HSV颜色空间
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        # 高斯模糊减少噪声
+        blur_size = self.color_detection_params['gaussian_blur_size']
+        if blur_size > 0:
+            hsv = cv2.GaussianBlur(hsv, (blur_size, blur_size), 0)
+        
+        detections = []
+        
+        # 检测每种颜色
+        for color_name, color_range in self.color_ranges.items():
+            mask = self.create_color_mask(hsv, color_range)
+            
+            # 形态学操作去噪
+            kernel_size = self.color_detection_params['morphology_kernel_size']
+            kernel = np.ones((kernel_size, kernel_size), np.uint8)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            
+            # 查找轮廓
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # 处理每个轮廓
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > self.color_detection_params['min_contour_area']:
+                    # 计算边界框
+                    x, y, w, h = cv2.boundingRect(contour)
+                    
+                    # 计算置信度（基于轮廓面积和形状特征）
+                    confidence = self.calculate_color_confidence(contour, area)
+                    
+                    # 添加检测结果
+                    detections.append({
+                        'bbox': [x, y, x + w, y + h],
+                        'class_name': color_name,
+                        'class_id': list(self.color_ranges.keys()).index(color_name),
+                        'confidence': confidence,
+                        'contour_area': area
+                    })
+        
+        return detections
+    
+    def create_color_mask(self, hsv, color_range):
+        """创建颜色掩码"""
+        if 'lower1' in color_range and 'upper1' in color_range:
+            # 红色有两个范围
+            mask1 = cv2.inRange(hsv, color_range['lower1'], color_range['upper1'])
+            mask2 = cv2.inRange(hsv, color_range['lower2'], color_range['upper2'])
+            mask = cv2.bitwise_or(mask1, mask2)
+        else:
+            # 其他颜色只有一个范围
+            mask = cv2.inRange(hsv, color_range['lower'], color_range['upper'])
+        
+        return mask
+    
+    def calculate_color_confidence(self, contour, area):
+        """计算颜色检测的置信度"""
+        # 基于轮廓面积和形状特征计算置信度
+        # 可以根据实际需要调整这个算法
+        
+        # 计算轮廓的周长
+        perimeter = cv2.arcLength(contour, True)
+        
+        # 计算紧致度（4π*面积/周长²）
+        if perimeter > 0:
+            compactness = 4 * np.pi * area / (perimeter * perimeter)
+        else:
+            compactness = 0
+        
+        # 计算面积占比得分（面积越大，置信度越高，但有上限）
+        area_score = min(area / 10000.0, 1.0)  # 假设10000像素为满分面积
+        
+        # 计算形状得分（越接近圆形得分越高）
+        shape_score = min(compactness * 2, 1.0)  # 完美圆形的紧致度为1
+        
+        # 综合得分
+        confidence = (area_score * 0.7 + shape_score * 0.3)
+        confidence = max(0.1, min(confidence, 1.0))  # 限制在0.1-1.0之间
+        
+        return confidence
+    
+    def create_color_detection_result(self, detections):
+        """将颜色检测结果转换为类似YOLO结果的格式"""
+        class ColorDetectionResult:
+            def __init__(self, detections):
+                if detections:
+                    # 转换为numpy数组格式
+                    self.boxes = ColorDetectionBoxes(detections)
+                else:
+                    self.boxes = None
+        
+        class ColorDetectionBoxes:
+            def __init__(self, detections):
+                # 提取边界框坐标
+                bboxes = [det['bbox'] for det in detections]
+                self.xyxy = ColorDetectionTensor(np.array(bboxes, dtype=np.float32))
+                
+                # 提取置信度
+                confidences = [det['confidence'] for det in detections]
+                self.conf = ColorDetectionTensor(np.array(confidences, dtype=np.float32))
+                
+                # 提取类别ID
+                class_ids = [det['class_id'] for det in detections]
+                self.cls = ColorDetectionTensor(np.array(class_ids, dtype=np.int32))
+        
+        class ColorDetectionTensor:
+            def __init__(self, data):
+                self.data = data
+            
+            def cpu(self):
+                return self
+            
+            def numpy(self):
+                return self.data
+        
+        return ColorDetectionResult(detections)
+
+    def prune_old_points(self, max_age_seconds=300):
+        """删除过期的点（默认5分钟）"""
+        current_time = rospy.Time.now().to_sec()
+        removed_count = 0
+        
+        with self.data_lock:
+            for target_name, points in self.target_points.items():
+                original_count = len(points)
+                # 保留未过期的点
+                self.target_points[target_name] = [
+                    point for point in points 
+                    if (current_time - point['timestamp']) <= max_age_seconds
+                ]
+                removed_count += original_count - len(self.target_points[target_name])
+        
+        if removed_count > 0:
+            rospy.loginfo(f"删除了 {removed_count} 个过期点")
+            # 发布更新后的点云
+            self.publish_pointclouds()
+
+"""
+颜色检测参数说明：
+
+检测方法选择：
+    detection_method: 'yolo' 或 'color'
+    - 'yolo': 使用YOLO模型检测
+    - 'color': 使用颜色阈值检测
+
+颜色阈值检测参数：
+    min_contour_area: 最小轮廓面积，过滤小的噪声区域
+    morphology_kernel_size: 形态学操作核大小，用于去噪
+    gaussian_blur_size: 高斯模糊核大小，预处理减少噪声
+
+HSV颜色范围：
+    红色 (red): H=[0,10] 或 [170,180], S=[50,255], V=[50,255]
+    黄色 (yellow): H=[20,30], S=[50,255], V=[50,255] 
+    白色 (white): H=[0,180], S=[0,30], V=[200,255]
+
+使用示例：
+    rosrun your_package yolo11_inference.py _detection_method:=color
+    rosrun your_package yolo11_inference.py _detection_method:=yolo
+"""
 
 def main():
     """主函数"""

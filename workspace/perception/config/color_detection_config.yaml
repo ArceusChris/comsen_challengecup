@@ -1,0 +1,59 @@
+# 颜色检测配置文件
+# 用于YOLO11推理节点的颜色阈值检测模式
+
+# 检测方法选择 ('yolo' 或 'color')
+detection_method: 'color'
+
+# 相机和话题配置
+input_topic: '/iris_0/camera/image_raw'
+output_topic: '/yolo11/detection_image'
+pose_topic: '/iris_0/mavros/local_position/pose'
+camera_info_topic: '/iris_0/camera/camera_info'
+
+# 颜色检测参数
+color_detection:
+  min_contour_area: 500        # 最小轮廓面积（像素²）
+  morphology_kernel_size: 5    # 形态学操作核大小
+  gaussian_blur_size: 5        # 高斯模糊核大小（0表示不模糊）
+
+# HSV颜色阈值范围
+color_ranges:
+  red:
+    # 红色在HSV色彩空间中跨越0度附近，需要两个范围
+    lower1: [0, 50, 50]      # H, S, V 下限1
+    upper1: [10, 255, 255]   # H, S, V 上限1
+    lower2: [170, 50, 50]    # H, S, V 下限2
+    upper2: [180, 255, 255]  # H, S, V 上限2
+  
+  yellow:
+    lower: [20, 50, 50]      # H, S, V 下限
+    upper: [30, 255, 255]    # H, S, V 上限
+  
+  white:
+    lower: [0, 0, 200]       # H, S, V 下限（低饱和度，高亮度）
+    upper: [180, 30, 255]    # H, S, V 上限
+
+# 点云发布配置
+pointcloud:
+  publish_pointcloud: true
+  pointcloud_frame_id: 'map'
+  max_points_per_cloud: 1000
+
+# YOLO模式参数（当detection_method为'yolo'时使用）
+yolo:
+  model_path: 'models/yolo11n_original.pt'
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+
+# 颜色调整建议：
+# 红色物体：
+#   - 如果检测不到：增大S和V的下限，减小上限
+#   - 如果误检太多：减小S和V的范围
+# 
+# 黄色物体：
+#   - 如果检测不到：调整H范围到[15,35]
+#   - 如果与橙色混淆：缩小H范围到[22,28]
+#
+# 白色物体：
+#   - 如果检测不到：降低V下限到150
+#   - 如果误检灰色：提高V下限到220，降低S上限到20
