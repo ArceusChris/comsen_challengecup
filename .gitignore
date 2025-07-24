@@ -24,6 +24,7 @@ Thumbs.db
 workspace/dataset/*
 workspace/dataset_backup/*
 workspace/yolo_train/dataset/*
+workspace/yolo_dataset/*
 
 *.pyc
 __pycache__/
