@@ -47,16 +47,16 @@ class YOLO11InferenceNode:
         self.bridge = CvBridge()
         
         # 获取参数
-        self.input_topic = rospy.get_param('~input_topic', '/camera/image_raw')
+        self.input_topic = rospy.get_param('~input_topic', '/standard_vtol_0/camera/image_raw')
         self.output_topic = rospy.get_param('~output_topic', '/yolo11/detection_image')
-        self.pose_topic = rospy.get_param('~pose_topic', '/iris_0/mavros/local_position/pose')
-        self.camera_info_topic = rospy.get_param('~camera_info_topic', '/iris_0/camera/camera_info')
+        self.pose_topic = rospy.get_param('~pose_topic', '/standard_vtol_0/mavros/local_position/pose')
+        self.camera_info_topic = rospy.get_param('~camera_info_topic', '/standard_vtol_0/camera/camera_info')
         self.model_path = rospy.get_param('~model_path', 'models/yolo11n_original.pt')
         self.confidence_threshold = rospy.get_param('~confidence_threshold', 0.5)
         self.iou_threshold = rospy.get_param('~iou_threshold', 0.45)
         
         # 检测方法选择参数
-        self.detection_method = rospy.get_param('~detection_method', 'color')  # 'yolo' 或 'color'
+        self.detection_method = rospy.get_param('~detection_method', 'yolo')  # 'yolo' 或 'color'
         
         # 颜色阈值检测参数
         self.color_detection_params = {
@@ -93,6 +93,10 @@ class YOLO11InferenceNode:
         self.current_pose = None
         self.camera_info = None
         self.data_lock = threading.Lock()
+        
+        # 预初始化TF2系统
+        self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         
         # 创建三个目标的点集
         self.target_points = {
@@ -146,6 +150,10 @@ class YOLO11InferenceNode:
             rospy.loginfo(f"颜色检测参数: {self.color_detection_params}")
         rospy.loginfo(f"点云坐标系: {self.pointcloud_frame_id}")
         rospy.loginfo(f"每个点云最大点数: {self.max_points_per_cloud}")
+        rospy.loginfo("TF2系统已初始化，等待变换数据...")
+        
+        # 等待TF系统建立
+        rospy.sleep(1.0)
         
     def load_model(self):
         """加载YOLO11模型"""
@@ -299,64 +307,110 @@ class YOLO11InferenceNode:
         if camera_info is None or pose is None:
             return None
         
-        # 获取相机内参
-        fx = camera_info.K[0]  # 焦距x
-        fy = camera_info.K[4]  # 焦距y
-        cx = camera_info.K[2]  # 光心x
-        cy = camera_info.K[5]  # 光心y
-        
-        # 将像素坐标转换为归一化相机坐标
-        x_norm = (pixel_x - cx) / fx
-        y_norm = (pixel_y - cy) / fy
-        
-        # 第一步：从像素坐标到相机坐标系
-        # 相机坐标系下的射线方向（假设相机朝向+Z方向，符合ROS标准）
-        ray_camera = np.array([x_norm, y_norm, 1.0])
-        ray_camera = ray_camera / np.linalg.norm(ray_camera)
-        
-        # 第二步：从相机坐标系到无人机坐标系（body frame）
-        # 使用配置的相机变换参数
-        R_camera_to_body = self.camera_transform_params['rotation']
-        t_camera_to_body = self.camera_transform_params['translation']
-        
-        # 将相机射线转换到无人机坐标系
-        ray_body = R_camera_to_body @ ray_camera
-        
-        # 第三步：从无人机坐标系到世界坐标系
-        # 获取无人机位姿信息
-        drone_pos = pose.pose.position
-        drone_orientation = pose.pose.orientation
-        
-        # 将四元数转换为旋转矩阵（无人机到世界坐标系的变换）
-        quaternion = [drone_orientation.x, drone_orientation.y, 
-                     drone_orientation.z, drone_orientation.w]
-        R_body_to_world = quaternion_matrix(quaternion)[:3, :3]
-        
-        # 无人机在世界坐标系中的位置
-        drone_pos_world = np.array([drone_pos.x, drone_pos.y, drone_pos.z])
-        
-        # 计算相机在世界坐标系中的位置
-        camera_pos_world = drone_pos_world + R_body_to_world @ t_camera_to_body
-        
-        # 将射线转换到世界坐标系
-        ray_world = R_body_to_world @ ray_body
-        
-        # 第四步：计算射线与地面的交点（假设地面Z=0）
-        # 射线方程: P = camera_pos_world + t * ray_world
-        # 地面方程: Z = 0
-        # 求解: camera_pos_world[2] + t * ray_world[2] = 0
-        if abs(ray_world[2]) < 1e-6:  # 射线平行于地面
+        try:
+            # 第一步：计算物体相对于相机坐标系的齐次坐标
+            # 获取相机内参
+            fx = camera_info.K[0]  # 焦距x
+            fy = camera_info.K[4]  # 焦距y
+            cx = camera_info.K[2]  # 光心x
+            cy = camera_info.K[5]  # 光心y
+            
+            # 将像素坐标转换为相机坐标系的齐次坐标（向右为x轴正方向，向下为y轴正方向）
+            x0 = (pixel_x - cx) / fx
+            y0 = (pixel_y - cy) / fy
+            # 相机坐标系下的齐次坐标
+            camera_point = np.array([x0, y0, 1.0])
+            
+            # 第二步：使用TF2将相机坐标系的两个点转换到地图坐标系
+            # TF2 buffer和listener已在__init__中初始化
+            
+            # 获取从相机坐标系到地图坐标系的变换
+            try:
+                # 使用稍早的时间戳避免重复数据警告
+                lookup_time = rospy.Time.now() - rospy.Duration(0.1)
+                
+                # 首先检查变换是否可用
+                if self.tf_buffer.can_transform('map', 'standard_vtol_0/camera_link', lookup_time, rospy.Duration(0.1)):
+                    transform = self.tf_buffer.lookup_transform(
+                        'map',  # 目标坐标系
+                        'standard_vtol_0/camera_link',  # 源坐标系
+                        lookup_time,  # 使用稍早的时间戳
+                        rospy.Duration(0.1)  # 超时时间
+                    )
+                else:
+                    # 如果没有特定时间的变换，使用最新的
+                    transform = self.tf_buffer.lookup_transform(
+                        'map',  # 目标坐标系
+                        'standard_vtol_0/camera_link',  # 源坐标系
+                        rospy.Time(0),  # 最新的变换
+                        rospy.Duration(0.5)  # 增加超时时间
+                    )
+                    
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+                rospy.logwarn_throttle(5.0, f"无法获取TF变换: {e}")
+                return None
+            
+            # 定义相机坐标系中的两个点
+            # 点1：相机光心 (0, 0, 0)
+            point1_camera = np.array([0.0, 0.0, 0.0, 1.0])  # 齐次坐标
+            # 点2：物体在相机坐标系中的位置 (x0, y0, 1)
+            point2_camera = np.array([x0, y0, 1.0, 1.0])  # 齐次坐标
+            
+            # 将变换转换为4x4矩阵
+            transform_matrix = self.transform_to_matrix(transform)
+            
+            # 将两个点转换到地图坐标系
+            point1_map = transform_matrix @ point1_camera
+            point2_map = transform_matrix @ point2_camera
+            
+            # 转换为3D点（去除齐次坐标的最后一维）
+            point1_map_3d = point1_map[:3]
+            point2_map_3d = point2_map[:3]
+            
+            # 第三步：计算直线与地面(z=0)的交点
+            # 直线方程：P = point1_map_3d + t * (point2_map_3d - point1_map_3d)
+            # 地面方程：z = 0
+            
+            direction = point2_map_3d - point1_map_3d
+            
+            # 检查直线是否平行于地面
+            if abs(direction[2]) < 1e-6:
+                rospy.logwarn_throttle(1.0, "直线平行于地面，无法计算交点")
+                return None
+            
+            # 求解参数t使得 point1_map_3d[2] + t * direction[2] = 0
+            t = -point1_map_3d[2] / direction[2]
+            
+            # 检查交点是否在射线的正方向上
+            if t < 0:
+                rospy.logwarn_throttle(1.0, "交点在相机后方")
+                return None
+            
+            # 计算交点
+            intersection_point = point1_map_3d + t * direction
+            intersection_point[2] = 0.0  # 确保Z坐标为0
+            
+            return intersection_point
+            
+        except Exception as e:
+            rospy.logerr(f"坐标转换失败: {e}")
             return None
+    
+    def transform_to_matrix(self, transform):
+        """将TF2变换转换为4x4变换矩阵"""
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
         
-        t = -camera_pos_world[2] / ray_world[2]
-        if t < 0:  # 交点在相机后方
-            return None
+        # 从四元数创建旋转矩阵
+        quaternion = [rotation.x, rotation.y, rotation.z, rotation.w]
+        rotation_matrix = quaternion_matrix(quaternion)
         
-        # 计算世界坐标
-        world_pos = camera_pos_world + t * ray_world
-        world_pos[2] = 0.0  # 确保Z坐标为0（地面高度）
+        # 设置平移
+        rotation_matrix[0, 3] = translation.x
+        rotation_matrix[1, 3] = translation.y
+        rotation_matrix[2, 3] = translation.z
         
-        return world_pos
+        return rotation_matrix
     
     def process_detections_and_update_points(self, result, pose, camera_info):
         """处理检测结果并更新点集"""

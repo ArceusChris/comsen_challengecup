@@ -2,9 +2,9 @@
 <launch>
    <!-- 颜色检测模式 -->
     <node name="yolo11_inference_color" pkg="perception" type="yolo11_inference.py" output="screen">
-        <param name="detection_method" value="color"/>
-        <param name="input_topic" value="/iris_0/camera/image_raw"/>
-        <param name="output_topic" value="/yolo11/detection_image_color"/>
+        <param name="detection_method" value="yolo"/>
+        <param name="input_topic" value="/standard_vtol_0/camera/image_raw"/>
+        <param name="output_topic" value="/yolo11/detection_image"/>
         
         <!-- 颜色检测参数 -->
         <param name="min_contour_area" value="500"/>

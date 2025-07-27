@@ -4,6 +4,11 @@
 # 作者：基于赛题操作步骤自动化脚本
 # 日期：2025年7月6日
 
+# 设置环境变量以解决无障碍服务总线连接问题
+export NO_AT_BRIDGE=1
+export QT_X11_NO_MITSHM=1
+export _JAVA_AWT_WM_NONREPARENTING=1
+
 # 设置错误处理
 set -e
 
@@ -215,7 +220,7 @@ start_communication() {
         cd ~/XTDrone/communication/
         source ~/.bashrc
         sleep 5
-        python3 vtol_communication.py standard_vtol 0
+        python3 vtol_communication_enhanced.py standard_vtol 0
         exec bash
     " &
     
@@ -303,6 +308,21 @@ start_target_control() {
     
     sleep 2
     log_info "目标移动控制启动完成"
+}
+
+# 启动坐标变换发布
+start_tf_publisher() {
+    log_step "启动坐标变换发布..."
+    
+    gnome-terminal --tab --title="坐标变换发布" -- bash -c "
+        cd /root/workspace/tf_transform
+        source ~/.bashrc
+        python3 mavros_pose_to_tf.py
+        exec bash
+    " &
+    
+    sleep 2
+    log_info "坐标变换发布启动完成"
 }
 
 # 启动数据记录
@@ -586,7 +606,6 @@ main() {
     start_simulation
     check_px4_status
     configure_px4_params
-    start_virtual_rc
     start_communication
     start_pose_ground_truth
     start_gps_publisher
@@ -595,6 +614,7 @@ main() {
     start_data_recording
     configure_px4_params
     start_virtual_rc
+    start_tf_publisher
     
     # 检查服务状态
     sleep 10
