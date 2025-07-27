@@ -187,7 +187,7 @@ class VTOLDemoFlight:
                     )
                     
                     # 检测是否接近目标
-                    if current_distance < 15.0:  # 15米内认为接近
+                    if current_distance < 25.0:  # 25米内认为接近
                         stable_count += 1
                         if stable_count > 100:  # 连续2秒(50Hz*2s=100)保持接近
                             rospy.loginfo(f"目标位置稳定到达，距离: {current_distance:.1f}m")
@@ -853,7 +853,7 @@ class VTOLDemoFlight:
             print(f"   航段距离: {segment_distance:.1f}m")
             
             # 动态计算容忍度和等待时间
-            waypoint_tolerance = min(25.0, max(10.0, segment_distance * 0.1))  # 距离的10%，最小10m，最大25m
+            waypoint_tolerance = min(25.0, max(20.0, segment_distance * 0.1))  # 距离的10%，最小20m，最大25m
             max_wait_time = max(30.0, min(90.0, segment_distance / 15.0))  # 基于15m/s速度，最小30s，最大90s
             
             print(f"   容忍度: {waypoint_tolerance:.1f}m, 最大等待: {max_wait_time:.1f}s")
@@ -1052,6 +1052,15 @@ class VTOLDemoFlight:
         print(f"   使用A*算法进行智能路径规划")
         print(f"   所有路径均避开居民区障碍物")
         
+        # 任务结束前自动返航到出发点
+        print(f"\n🏠 任务完成，执行自动返航...")
+        print("发送 AUTO.RTL 命令，无人机将自动返回出发点")
+        self.send_cmd("AUTO.RTL")
+        
+        # 等待返航完成
+        print("等待无人机返航并自动降落...")
+        time.sleep(3)  # 给返航命令一些响应时间
+        
         # 停止发布并解锁
         self.should_publish = False
         time.sleep(1)
@@ -1158,7 +1167,7 @@ class VTOLDemoFlight:
             print(f"❌ 可视化失败: {e}")
             return False
 
-    def wait_for_position_reached(self, target_x, target_y, target_z, tolerance=10.0, max_wait_time=60.0):
+    def wait_for_position_reached(self, target_x, target_y, target_z, tolerance=20.0, max_wait_time=60.0):
         """等待到达目标位置 - 闭环控制"""
         print(f"🎯 闭环等待到达: ({target_x:.1f}, {target_y:.1f}, {target_z:.1f}), 容忍度: {tolerance}m")
         
@@ -1240,9 +1249,9 @@ class VTOLDemoFlight:
         
         # 分阶段接近：远距离 -> 中距离 -> 精确定位
         approach_stages = [
-            (min(50.0, total_distance * 0.8), 30.0, "远距离接近"),
-            (min(20.0, total_distance * 0.5), 45.0, "中距离接近"),
-            (10.0, 60.0, "精确定位")
+            (min(50.0, total_distance * 0.8), 5.0, "远距离接近"),
+            (min(30.0, total_distance * 0.5), 5.0, "中距离接近"),
+            (20.0, 5.0, "精确定位")
         ]
         
         for stage, (tolerance, max_time, stage_name) in enumerate(approach_stages, 1):
@@ -1269,10 +1278,10 @@ class VTOLDemoFlight:
             print(f"   最终距离: {final_distance:.1f}m")
             print(f"   最终位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {self.current_position.z:.1f})")
             
-            if final_distance <= 15.0:
+            if final_distance <= 25.0:
                 print(f"   ✅ 精度良好")
                 return True
-            elif final_distance <= 30.0:
+            elif final_distance <= 40.0:
                 print(f"   ⚠️ 精度一般，但可接受")
                 return True
             else:

@@ -10,11 +10,11 @@ targets:
     name: "takeoff_point"
     description: "起飞点，旋翼区中心"
     
-  - position: [1600, 200, 20]    # 目标点1 (自由空间)
+  - position: [1495, 200, 20]    # 目标点1 (自由空间)
     name: "target_north"
     description: "北侧目标点，自由飞行区域"
     
-  - position: [1600, -200, 20]   # 目标点2 (自由空间)  
+  - position: [1495, -200, 20]   # 目标点2 (自由空间)  
     name: "target_south"
     description: "南侧目标点，自由飞行区域"
     
