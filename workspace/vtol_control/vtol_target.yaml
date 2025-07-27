@@ -1,0 +1,45 @@
+# VTOL无人机目标点配置文件
+# 格式: x, y, z (坐标和高度，单位：米)
+# 注意: 
+# - 旋翼区外必须使用固定翼模式
+# - 禁止在居民区飞行
+# - 起点和终点应在旋翼区内
+
+targets:
+  - position: [0, 0, 0]          # 起飞点 (旋翼区中心)
+    name: "takeoff_point"
+    description: "起飞点，旋翼区中心"
+    
+  - position: [1600, 200, 20]    # 目标点1 (自由空间)
+    name: "target_north"
+    description: "北侧目标点，自由飞行区域"
+    
+  - position: [1600, -200, 20]   # 目标点2 (自由空间)  
+    name: "target_south"
+    description: "南侧目标点，自由飞行区域"
+    
+  - position: [0, 0, 0]          # 返回点 (旋翼区中心)
+    name: "landing_point"
+    description: "降落点，回到旋翼区中心"
+
+# 飞行约束
+constraints:
+  multirotor_zone:
+    center: [0, 0]
+    radius: 100
+    allowed_modes: ["multirotor", "plane"]
+    
+  residential_areas:
+    - center: [1200, 0]
+      radius: 200
+      name: "downtown"
+      flight_prohibited: true
+      
+    - center: [1800, 0] 
+      radius: 200
+      name: "suburb"
+      flight_prohibited: true
+      
+  free_space:
+    required_mode: "plane"  # 旋翼区外必须使用固定翼模式
+    min_altitude: 15        # 最小飞行高度
