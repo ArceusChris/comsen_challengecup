@@ -20,7 +20,7 @@ import threading
 import yaml
 import os
 from geometry_msgs.msg import PoseStamped, Pose
-from std_msgs.msg import String
+from std_msgs.msg import String, Int8
 from vtol_map import VTOLMap, ZoneType
 from vtol_Astar import VTOLAstarPlanner
 
@@ -56,9 +56,14 @@ class VTOLDemoFlight:
         # 飞行模式状态
         self.current_mode = "multirotor"  # multirotor 或 plane
         
+        # Condition状态管理
+        self.current_condition = 0xAA  # 初始化为0xAA
+        self.last_sent_condition = None
+        
         print(f"初始化VTOL演示飞行: {self.vehicle_type}_{self.vehicle_id}")
         print(f"集成A*路径规划器 (网格大小: {self.astar_planner.grid_size}m)")
         print(f"加载了 {len(self.targets)} 个目标点")
+        print(f"Condition状态初始化为: 0x{self.current_condition:02X}")
         
         # 注意：ROS节点在主函数中初始化，这里稍后设置通信
         self.ros_initialized = False
@@ -82,10 +87,19 @@ class VTOLDemoFlight:
                                 x, y, z = pos[0], pos[1], pos[2]
                                 name = target_info.get('name', f'target_{len(targets)+1}')
                                 description = target_info.get('description', '')
+                                condition = target_info.get('condition', '0x00')  # 默认condition为0x00
+                                
+                                # 解析condition字符串为整数
+                                if isinstance(condition, str) and condition.startswith('0x'):
+                                    condition_value = int(condition, 16)
+                                else:
+                                    condition_value = int(condition) if isinstance(condition, (int, str)) else 0
+                                
                                 targets.append({
                                     'position': (x, y, z),
                                     'name': name,
-                                    'description': description
+                                    'description': description,
+                                    'condition': condition_value
                                 })
                 else:
                     raise ValueError("YAML文件格式错误：缺少'targets'字段")
@@ -93,27 +107,28 @@ class VTOLDemoFlight:
                 print(f"警告: 目标文件 {target_file} 不存在，使用默认目标点")
                 # 默认目标点
                 targets = [
-                    {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点'},
-                    {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点'},
-                    {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点'},
-                    {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点'}
+                    {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点', 'condition': 0x01},
+                    {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点', 'condition': 0x02},
+                    {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点', 'condition': 0x03},
+                    {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点', 'condition': 0x04}
                 ]
                 
         except Exception as e:
             print(f"加载目标文件出错: {e}")
             print("使用默认目标点...")
             targets = [
-                {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点'},
-                {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点'},
-                {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点'},
-                {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点'}
+                {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点', 'condition': 0x01},
+                {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点', 'condition': 0x02},
+                {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点', 'condition': 0x03},
+                {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点', 'condition': 0x04}
             ]
         
         print("目标点列表:")
         for i, target in enumerate(targets):
             x, y, z = target['position']
+            condition = target.get('condition', 0)
             zone_info = self.map.get_zone_info(x, y)
-            print(f"  {i+1}. {target['name']}: ({x}, {y}, {z}) - 区域: {zone_info['name']} - {target['description']}")
+            print(f"  {i+1}. {target['name']}: ({x}, {y}, {z}) - 区域: {zone_info['name']} - {target['description']} - Condition: 0x{condition:02X}")
         
         return targets
 
@@ -126,6 +141,11 @@ class VTOLDemoFlight:
             f"{self.vehicle_type}_{self.vehicle_id}/mavros/local_position/pose", 
             PoseStamped, self.local_pose_callback, queue_size=1)
         
+        # Condition话题订阅者
+        self.vtol_condition_sub = rospy.Subscriber(
+            '/zhihang2025/vtol_land_sub/done', 
+            Int8, self.done_callback, queue_size=1)
+        
         # 发布者
         self.cmd_pub = rospy.Publisher(
             f"/xtdrone/{self.vehicle_type}_{self.vehicle_id}/cmd", 
@@ -135,11 +155,53 @@ class VTOLDemoFlight:
             f"/xtdrone/{self.vehicle_type}_{self.vehicle_id}/cmd_pose_enu", 
             Pose, queue_size=10)
         
+        # Condition状态发布者
+        self.condition_pub = rospy.Publisher(
+            '/zhihang2025/vtol_land_sub/done', 
+            Int8, queue_size=10)
+        
+        # 发送初始condition状态
+        self.publish_condition(self.current_condition)
+        
         print("ROS通信初始化完成")
+        print(f"Condition话题: /zhihang2025/vtol_land_sub/done (订阅&发布)")
+        print(f"初始Condition: 0x{self.current_condition:02X}")
 
     def local_pose_callback(self, msg):
         """位置回调函数"""
         self.current_position = msg.pose.position
+
+    def done_callback(self, msg):
+        """Condition话题回调函数"""
+        received_condition = msg.data
+        print(f"📨 收到Condition消息: 0x{received_condition:02X}")
+    
+    def publish_condition(self, condition_value):
+        """发布condition状态"""
+        if condition_value != self.last_sent_condition:
+            msg = Int8()
+            msg.data = condition_value
+            self.condition_pub.publish(msg)
+            self.last_sent_condition = condition_value
+            print(f"📤 发送Condition: 0x{condition_value:02X}")
+        else:
+            print(f"📤 Condition 0x{condition_value:02X} 已发送过，跳过重复发送")
+    
+    def update_mission_condition(self, target_index):
+        """根据目标点索引更新并发送condition"""
+        if target_index < len(self.targets):
+            target = self.targets[target_index]
+            condition = target.get('condition', 0x00)
+            
+            print(f"🎯 到达目标点 {target['name']}，更新Condition状态")
+            print(f"   目标点索引: {target_index}")
+            print(f"   目标点名称: {target['name']}")
+            print(f"   Condition: 0x{condition:02X}")
+            
+            self.current_condition = condition
+            self.publish_condition(condition)
+        else:
+            print(f"⚠️ 无效的目标点索引: {target_index}")
 
     def send_cmd(self, cmd_str):
         """发送xtdrone命令"""
@@ -995,6 +1057,10 @@ class VTOLDemoFlight:
         
         print("✅ 起飞完成，开始A*导航任务")
         
+        # 起飞完成，发送起飞点的condition状态
+        if len(self.targets) > 0:
+            self.update_mission_condition(0)  # 起飞点是第一个目标点
+        
         # 依次飞向各个目标点
         successful_targets = 0
         
@@ -1018,6 +1084,9 @@ class VTOLDemoFlight:
             if success:
                 successful_targets += 1
                 print(f"✅ 成功到达目标点 {target_name} (用时: {flight_time:.1f}s)")
+                
+                # 更新并发送condition状态
+                self.update_mission_condition(i)
                 
                 # 在目标点执行相应动作
                 if target_z <= 1.0:  # 降落目标
