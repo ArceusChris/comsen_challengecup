@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 迷彩图案检测器 -->
+    <node pkg="landing_detection" 
+          type="camouflage_pattern_detector.py" 
+          name="camouflage_detector" 
+          output="screen">
+        
+        <!-- 检测参数 -->
+        <param name="white_threshold" value="200" />
+        <param name="min_circle_radius" value="30" />
+        <param name="max_circle_radius" value="200" />
+        <param name="min_contour_area" value="1000" />
+        
+        <!-- 纹理分析参数 -->
+        <param name="texture_window_size" value="15" />
+        <param name="edge_threshold" value="50" />
+        <param name="circularity_threshold" value="0.6" />
+        
+        <!-- 话题重映射 -->
+        <remap from="/iris_0/camera/image_raw" to="/iris_0/camera/image_raw" />
+    </node>
+    
+</launch>

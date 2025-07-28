@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 统一的多模式检测器启动文件 -->
+    
+    <!-- 参数：选择检测模式 -->
+    <!-- mode: "camouflage", "red", "both" -->
+    <arg name="mode" default="both" />
+    
+    <!-- 迷彩图案检测器 -->
+    <group if="$(eval arg('mode') == 'camouflage' or arg('mode') == 'both')">
+        <node pkg="landing_detection" 
+              type="camouflage_pattern_detector.py" 
+              name="camouflage_detector" 
+              output="screen">
+            
+            <!-- 检测参数 -->
+            <param name="white_threshold" value="200" />
+            <param name="min_circle_radius" value="30" />
+            <param name="max_circle_radius" value="200" />
+            <param name="min_contour_area" value="1000" />
+            
+            <!-- 纹理分析参数 -->
+            <param name="texture_window_size" value="15" />
+            <param name="edge_threshold" value="50" />
+            <param name="circularity_threshold" value="0.6" />
+        </node>
+    </group>
+    
+    <!-- 红色图案检测器 -->
+    <group if="$(eval arg('mode') == 'red' or arg('mode') == 'both')">
+        <node pkg="landing_detection" 
+              type="red_pattern_detector.py" 
+              name="red_detector" 
+              output="screen">
+            
+            <!-- 红色检测参数 (HSV) -->
+            <param name="red_lower1_h" value="0" />
+            <param name="red_lower1_s" value="100" />
+            <param name="red_lower1_v" value="100" />
+            <param name="red_upper1_h" value="10" />
+            <param name="red_upper1_s" value="255" />
+            <param name="red_upper1_v" value="255" />
+            
+            <param name="red_lower2_h" value="170" />
+            <param name="red_lower2_s" value="100" />
+            <param name="red_lower2_v" value="100" />
+            <param name="red_upper2_h" value="180" />
+            <param name="red_upper2_s" value="255" />
+            <param name="red_upper2_v" value="255" />
+            
+            <!-- 白色检测参数 (HSV) -->
+            <param name="white_lower_h" value="0" />
+            <param name="white_lower_s" value="0" />
+            <param name="white_lower_v" value="200" />
+            <param name="white_upper_h" value="180" />
+            <param name="white_upper_s" value="30" />
+            <param name="white_upper_v" value="255" />
+            
+            <!-- 几何参数 -->
+            <param name="min_circle_radius" value="30" />
+            <param name="max_circle_radius" value="200" />
+            <param name="min_contour_area" value="1000" />
+            <param name="circularity_threshold" value="0.65" />
+            <param name="red_area_threshold" value="0.6" />
+        </node>
+    </group>
+    
+    <!-- 可选：启动图像查看器 -->
+    <arg name="show_debug" default="true" />
+    <group if="$(arg show_debug)">
+        <node name="debug_viewer" pkg="rqt_image_view" type="rqt_image_view" />
+    </group>
+    
+</launch>
