@@ -1,0 +1,92 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 精准降落系统启动文件 -->
+    
+    <!-- 参数配置 -->
+    <arg name="drone_id" default="0" />
+    <arg name="drone_type" default="iris" />
+    <arg name="detector_type" default="multi" doc="Detection type: basic, camouflage, red, multi" />
+    <arg name="enable_visual_servo" default="false" />
+    
+    <!-- 启动降落平台检测器 -->
+    <group if="$(eval arg('detector_type') == 'basic')">
+        <include file="$(find landing_detection)/launch/landing_detection.launch" />
+    </group>
+    
+    <group if="$(eval arg('detector_type') == 'camouflage')">
+        <include file="$(find landing_detection)/launch/camouflage_detection.launch" />
+    </group>
+    
+    <group if="$(eval arg('detector_type') == 'red')">
+        <include file="$(find landing_detection)/launch/red_detection.launch" />
+    </group>
+    
+    <group if="$(eval arg('detector_type') == 'multi')">
+        <include file="$(find landing_detection)/launch/multi_pattern_detection.launch" />
+    </group>
+    
+    <!-- 精准降落控制器 -->
+    <node pkg="precision_landing" 
+          type="precision_landing_controller.py" 
+          name="precision_landing_controller" 
+          output="screen">
+        
+        <!-- 控制参数 -->
+        <param name="image_width" value="640" />
+        <param name="image_height" value="480" />
+        <param name="camera_fov_h" value="60.0" />
+        <param name="camera_fov_v" value="45.0" />
+        
+        <!-- PID参数 -->
+        <param name="pid_x_kp" value="0.5" />
+        <param name="pid_x_ki" value="0.01" />
+        <param name="pid_x_kd" value="0.1" />
+        
+        <param name="pid_y_kp" value="0.5" />
+        <param name="pid_y_ki" value="0.01" />
+        <param name="pid_y_kd" value="0.1" />
+        
+        <param name="pid_z_kp" value="0.3" />
+        <param name="pid_z_ki" value="0.005" />
+        <param name="pid_z_kd" value="0.05" />
+        
+        <!-- 降落参数 -->
+        <param name="landing_threshold" value="50" />
+        <param name="min_altitude" value="0.5" />
+        <param name="descent_rate" value="0.3" />
+        <param name="max_vel" value="2.0" />
+        
+    </node>
+    
+    <!-- 降落状态机 -->
+    <node pkg="precision_landing" 
+          type="landing_state_machine.py" 
+          name="landing_state_machine" 
+          output="screen">
+        
+        <!-- 状态机参数 -->
+        <param name="search_altitude" value="10.0" />
+        <param name="approach_altitude" value="5.0" />
+        <param name="alignment_altitude" value="3.0" />
+        <param name="final_altitude" value="1.0" />
+        <param name="landing_threshold" value="30" />
+        <param name="search_timeout" value="30.0" />
+        <param name="approach_timeout" value="15.0" />
+        
+    </node>
+    
+    <!-- 可选：视觉伺服控制器 -->
+    <group if="$(arg enable_visual_servo)">
+        <node pkg="precision_landing" 
+              type="visual_servo_controller.py" 
+              name="visual_servo_controller" 
+              output="screen">
+            
+            <param name="lambda_param" value="0.5" />
+            <param name="depth_gain" value="0.3" />
+            <param name="target_radius" value="50" />
+            
+        </node>
+    </group>
+    
+</launch>

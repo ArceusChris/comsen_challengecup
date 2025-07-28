@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 测试环境启动文件 -->
+    
+    <!-- 启动精准降落系统 -->
+    <include file="$(find precision_landing)/launch/precision_landing.launch">
+        <arg name="detector_type" value="multi" />
+        <arg name="enable_visual_servo" value="false" />
+    </include>
+    
+    <!-- 启动测试客户端 -->
+    <node pkg="precision_landing" 
+          type="test_precision_landing.py" 
+          name="test_precision_landing" 
+          output="screen"
+          launch-prefix="gnome-terminal --" />
+    
+    <!-- 启动图像查看器 -->
+    <node name="landing_debug_viewer" 
+          pkg="rqt_image_view" 
+          type="rqt_image_view" 
+          args="/landing_debug_camo" />
+          
+    <node name="red_debug_viewer" 
+          pkg="rqt_image_view" 
+          type="rqt_image_view" 
+          args="/landing_debug_red" />
+    
+    <!-- 启动rqt监控 -->
+    <node name="rqt_console" 
+          pkg="rqt_console" 
+          type="rqt_console" />
+          
+</launch>

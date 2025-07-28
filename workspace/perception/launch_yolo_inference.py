@@ -33,6 +33,11 @@ def launch_yolo_node():
     rospy.set_param('/yolo11_inference_node/camera_rotation_matrix', camera_rotation)
     rospy.set_param('/yolo11_inference_node/camera_translation', camera_translation)
     
+    # 设置点云发布参数
+    rospy.set_param('/yolo11_inference_node/publish_pointcloud', True)
+    rospy.set_param('/yolo11_inference_node/pointcloud_frame_id', 'map')
+    rospy.set_param('/yolo11_inference_node/max_points_per_cloud', 1000)
+    
     print("YOLO11推理节点参数已设置")
     print("输入话题: /iris_0/camera/image_raw")
     print("输出话题: /yolo11/detection_image")
@@ -45,6 +50,14 @@ def launch_yolo_node():
     print("旋转矩阵:", camera_rotation)
     print("平移向量:", camera_translation)
     print("相机位置：无人机正下方0.03m处")
+    print("\n点云发布设置:")
+    print("发布点云: True")
+    print("点云坐标系: map")
+    print("每个点云最大点数: 1000")
+    print("点云话题:")
+    print("  /yolo11/pointcloud/red")
+    print("  /yolo11/pointcloud/yellow") 
+    print("  /yolo11/pointcloud/white")
     print("\n如需自定义其他配置，可使用:")
     print("python3 camera_transform_config.py")
     print("\n请在另一个终端中运行:")

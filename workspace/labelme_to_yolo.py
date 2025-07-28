@@ -248,7 +248,7 @@ names:
 
 def main():
     parser = argparse.ArgumentParser(description="将labelme格式数据集转换为YOLO11格式")
-    parser.add_argument("--dataset", "-d", type=str, default="dataset", 
+    parser.add_argument("--dataset", "-d", type=str, default="workspace/dataset", 
                        help="labelme数据集路径 (默认: dataset)")
     parser.add_argument("--output", "-o", type=str, default=None,
                        help="输出YOLO数据集路径 (默认: yolo_dataset)")
