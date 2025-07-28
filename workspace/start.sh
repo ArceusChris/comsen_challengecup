@@ -220,7 +220,7 @@ start_communication() {
         cd ~/XTDrone/communication/
         source ~/.bashrc
         sleep 5
-        python3 vtol_communication_enhanced.py standard_vtol 0
+        python3 vtol_communication.py standard_vtol 0
         exec bash
     " &
     

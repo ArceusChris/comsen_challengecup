@@ -1,0 +1,68 @@
+# VTOL无人机目标点配置文件
+# 格式: x, y, z (坐标和高度，单位：米)
+# 注意: 
+# - 旋翼区外必须使用固定翼模式
+# - 禁止在居民区飞行
+# - 起点和终点应在旋翼区内
+
+# ROS话题配置
+topics:
+  condition_topic: "/zhihang2025/vtol_land_sub/done"
+
+targets:
+  - position: [0, 0, 0]          # 起飞点 (旋翼区中心)
+    name: "takeoff_point"
+    condition: "0x01" # 成功起飞
+    description: "准备起飞"
+    
+  - position: [1495, 200, 40]    # 目标点1 (自由空间)
+    name: "stage_1_start"
+    condition: "0x02" # 开始第一次巡航
+    description: "到达第一次巡航起点，开始第一次巡航"
+
+  - position: [1495, -200, 40]   # 目标点2 (自由空间)
+    name: "stage_1_end"
+    condition: "0x02" # 开始第一次巡航
+    description: "到达第一次巡航终点，准备下降高度"
+
+  - position: [1495, -200, 20]   # 目标点2 (自由空间)
+    name: "stage_2_start"
+    condition: "0x03" # 开始第二次巡航
+    description: "到达第二次巡航起点，开始第二次巡航"
+
+  - position: [1495, 200, 20]   # 目标点2 (自由空间)
+    name: "stage_2_end"
+    condition: "0x03" # 开始第二次巡航
+    description: "到达第二次巡航终点，准备返航"
+
+  - position: [0, 0, 0]          # 返回点 (旋翼区中心)
+    name: "landing_point"
+    condition: "0x04" # 开始降落
+    description: "进行降落"
+
+  - position: [0, 0, 0]          # 返回点 (旋翼区中心)
+    name: "landing_point"
+    condition: "0x05" # 成功降落
+    description: "成功降落,发送0x05,引导四旋翼无人机起飞"
+
+# 飞行约束
+constraints:
+  multirotor_zone:
+    center: [0, 0]
+    radius: 100
+    allowed_modes: ["multirotor", "plane"]
+    
+  residential_areas:
+    - center: [1200, 0]
+      radius: 200
+      name: "downtown"
+      flight_prohibited: true
+      
+    - center: [1800, 0] 
+      radius: 200
+      name: "suburb"
+      flight_prohibited: true
+      
+  free_space:
+    required_mode: "plane"  # 旋翼区外必须使用固定翼模式
+    min_altitude: 15        # 最小飞行高度
