@@ -29,3 +29,5 @@ workspace/yolo_dataset/*
 *.pyc
 __pycache__/
 *.pyo
+
+dataset/
