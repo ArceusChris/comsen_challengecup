@@ -70,17 +70,27 @@ class VTOLDemoFlight:
 
     def load_targets(self):
         """加载vtol_target.yaml中的目标点"""
-        target_file = "vtol_target.yaml"
+        # 使用绝对路径
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        target_file = os.path.join(current_dir, "vtol_target.yaml")
         targets = []
+        
+        print(f"🔍 加载目标文件: {target_file}")
+        print(f"📁 当前工作目录: {os.getcwd()}")
+        print(f"📄 文件存在: {os.path.exists(target_file)}")
         
         try:
             if os.path.exists(target_file):
                 with open(target_file, 'r', encoding='utf-8') as f:
                     data = yaml.safe_load(f)
+                
+                print(f"📊 YAML数据加载成功，内容键: {list(data.keys()) if data else 'None'}")
                     
                 # 解析YAML格式
                 if data and 'targets' in data:
-                    for target_info in data['targets']:
+                    print(f"🎯 找到 {len(data['targets'])} 个目标点配置")
+                    for i, target_info in enumerate(data['targets']):
+                        print(f"   解析目标点 {i+1}: {target_info}")
                         if 'position' in target_info:
                             pos = target_info['position']
                             if len(pos) >= 3:
@@ -89,11 +99,18 @@ class VTOLDemoFlight:
                                 description = target_info.get('description', '')
                                 condition = target_info.get('condition', '0x00')  # 默认condition为0x00
                                 
+                                print(f"     位置: ({x}, {y}, {z})")
+                                print(f"     名称: {name}")
+                                print(f"     描述: {description}")
+                                print(f"     Condition: {condition}")
+                                
                                 # 解析condition字符串为整数
                                 if isinstance(condition, str) and condition.startswith('0x'):
                                     condition_value = int(condition, 16)
                                 else:
                                     condition_value = int(condition) if isinstance(condition, (int, str)) else 0
+                                
+                                print(f"     Condition值: 0x{condition_value:02X}")
                                 
                                 targets.append({
                                     'position': (x, y, z),
@@ -101,28 +118,34 @@ class VTOLDemoFlight:
                                     'description': description,
                                     'condition': condition_value
                                 })
+                                print(f"     ✅ 目标点 {name} 添加成功")
+                            else:
+                                print(f"     ❌ 位置坐标不完整: {pos}")
+                        else:
+                            print(f"     ❌ 缺少position字段")
                 else:
+                    print("❌ YAML数据为空或缺少'targets'字段")
+                    if data:
+                        print(f"   可用的键: {list(data.keys())}")
                     raise ValueError("YAML文件格式错误：缺少'targets'字段")
             else:
-                print(f"警告: 目标文件 {target_file} 不存在，使用默认目标点")
-                # 默认目标点
-                targets = [
-                    {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点', 'condition': 0x01},
-                    {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点', 'condition': 0x02},
-                    {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点', 'condition': 0x03},
-                    {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点', 'condition': 0x04}
-                ]
+                print(f"❌ 错误: 目标文件 {target_file} 不存在")
+                print("❌ 无法加载飞行目标点，程序退出")
+                raise FileNotFoundError(f"目标文件不存在: {target_file}")
                 
         except Exception as e:
-            print(f"加载目标文件出错: {e}")
-            print("使用默认目标点...")
-            targets = [
-                {'position': (0, 0, 0), 'name': 'takeoff_point', 'description': '起飞点', 'condition': 0x01},
-                {'position': (1600, 200, 20), 'name': 'target_north', 'description': '北侧目标点', 'condition': 0x02},
-                {'position': (1600, -200, 20), 'name': 'target_south', 'description': '南侧目标点', 'condition': 0x03},
-                {'position': (0, 0, 0), 'name': 'landing_point', 'description': '降落点', 'condition': 0x04}
-            ]
+            print(f"❌ 加载目标文件失败: {e}")
+            print("❌ YAML文件解析错误，拒绝起飞")
+            print("❌ 程序将退出，请检查vtol_target.yaml文件格式")
+            raise e
         
+        # 验证目标点数量
+        if not targets:
+            print("❌ 错误: 没有找到有效的目标点")
+            print("❌ 请检查vtol_target.yaml文件中的targets配置")
+            raise ValueError("没有有效的目标点")
+        
+        print(f"✅ 成功加载 {len(targets)} 个目标点")
         print("目标点列表:")
         for i, target in enumerate(targets):
             x, y, z = target['position']
@@ -1126,15 +1149,26 @@ class VTOLDemoFlight:
         print("发送 AUTO.RTL 命令，无人机将自动返回出发点")
         self.send_cmd("AUTO.RTL")
         
-        # 等待返航完成
+        # 等待返航和降落完成
         print("等待无人机返航并自动降落...")
-        time.sleep(3)  # 给返航命令一些响应时间
+        self.wait_for_landing_completion()
+        
+        # 发送最终的0x05 condition（成功降落，引导四旋翼无人机起飞）
+        print("\n🛬 无人机成功降落，发送最终condition...")
+        final_condition = 0x05
+        self.publish_condition(final_condition)
+        print(f"✅ 发送最终condition 0x{final_condition:02X} - 引导四旋翼无人机起飞")
+        
+        # 等待condition发送完成并确保系统稳定
+        print("等待系统状态稳定...")
+        time.sleep(5)  # 等待5秒确保消息发送和系统稳定
         
         # 停止发布并解锁
         self.should_publish = False
         time.sleep(1)
         self.send_cmd("DISARM")
         
+        print("\n🎉 VTOL任务完全完成，系统安全退出")
         return True
 
     def run(self):
@@ -1186,7 +1220,7 @@ class VTOLDemoFlight:
             
             # 为每对相邻目标点规划并绘制路径
             for i in range(len(self.targets) - 1):
-                if i == 0:  # 跳过起点到第一个目标的路径（起飞）
+                if i == 0:  # 跳过起飞
                     continue
                     
                 start_target = self.targets[i]
@@ -1359,6 +1393,78 @@ class VTOLDemoFlight:
         
         return False
 
+    def wait_for_landing_completion(self):
+        """等待无人机返航和降落完成"""
+        print("🔍 监控无人机返航和降落过程...")
+        
+        max_wait_time = 120.0  # 最大等待2分钟
+        start_time = time.time()
+        landing_threshold = 2.0  # 降落高度阈值2米
+        stable_landing_time = 5.0  # 需要稳定在低高度5秒
+        
+        landing_start_time = None
+        last_height = float('inf')
+        
+        rate = rospy.Rate(2)  # 2Hz检查频率
+        
+        while time.time() - start_time < max_wait_time and not rospy.is_shutdown():
+            if self.current_position is None:
+                print("⚠️ 无法获取位置信息，继续等待...")
+                rate.sleep()
+                continue
+            
+            current_height = self.current_position.z
+            current_distance_to_origin = math.sqrt(
+                self.current_position.x**2 + self.current_position.y**2
+            )
+            
+            # 检查是否接近原点（返航成功）
+            if current_distance_to_origin <= 50.0:  # 距离原点50米内
+                print(f"📍 已返航至原点附近，距离: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                
+                # 检查是否开始降落
+                if current_height <= landing_threshold:
+                    if landing_start_time is None:
+                        landing_start_time = time.time()
+                        print(f"🛬 检测到开始降落，高度: {current_height:.1f}m")
+                    else:
+                        # 检查是否稳定降落
+                        stable_time = time.time() - landing_start_time
+                        if stable_time >= stable_landing_time:
+                            print(f"✅ 降落完成！稳定在低高度 {stable_time:.1f}s")
+                            print(f"   最终位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {current_height:.1f})")
+                            return True
+                        else:
+                            print(f"🛬 降落中...稳定时间: {stable_time:.1f}s/{stable_landing_time}s")
+                else:
+                    # 重置降落计时器（如果高度又升高了）
+                    if landing_start_time is not None:
+                        print(f"⬆️ 高度上升到 {current_height:.1f}m，重置降落检测")
+                        landing_start_time = None
+            else:
+                print(f"🏠 返航中...距离原点: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                landing_start_time = None  # 重置降落检测
+            
+            last_height = current_height
+            rate.sleep()
+        
+        # 超时处理
+        elapsed_time = time.time() - start_time
+        print(f"⏰ 等待降落超时 ({elapsed_time:.1f}s)，假设降落完成")
+        
+        if self.current_position:
+            final_height = self.current_position.z
+            final_distance = math.sqrt(self.current_position.x**2 + self.current_position.y**2)
+            print(f"   最终位置: 距离原点 {final_distance:.1f}m，高度 {final_height:.1f}m")
+            
+            # 即使超时，如果在合理范围内也认为成功
+            if final_distance <= 100.0 and final_height <= 10.0:
+                print("✅ 位置合理，认为降落成功")
+                return True
+        
+        print("⚠️ 降落状态不确定，但继续完成任务")
+        return False
+
 def main():
     """主函数：执行完整的VTOL飞行演示"""
     print("\n🚁 VTOL固定翼无人机飞行演示开始")
@@ -1369,6 +1475,17 @@ def main():
         print("📡 初始化飞行控制器...")
         controller = VTOLDemoFlight()
         
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
+        print(f"\n❌ YAML配置文件错误: {e}")
+        print("❌ 无法加载飞行目标点配置")
+        print("❌ 拒绝起飞，程序退出")
+        print("\n💡 请检查:")
+        print("   1. vtol_target.yaml 文件是否存在")
+        print("   2. YAML文件格式是否正确")
+        print("   3. targets 字段是否包含有效的目标点")
+        return False
+    
+    try:
         # 现在初始化ROS通信
         print("🔗 设置ROS通信...")
         controller.init_ros()

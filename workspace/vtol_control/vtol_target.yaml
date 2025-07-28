@@ -4,8 +4,10 @@
 # - 旋翼区外必须使用固定翼模式
 # - 禁止在居民区飞行
 # - 起点和终点应在旋翼区内
+
+# ROS话题配置
 topics:
-# ros话题配置
+  condition_topic: "/zhihang2025/vtol_land_sub/done"
 
 targets:
   - position: [0, 0, 0]          # 起飞点 (旋翼区中心)
