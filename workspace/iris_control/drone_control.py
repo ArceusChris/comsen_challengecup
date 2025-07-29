@@ -23,7 +23,7 @@ python3 drone_control.py <multirotor_type> <multirotor_id> <control_type>
 
 import rospy
 from geometry_msgs.msg import Twist, PoseStamped
-from std_msgs.msg import String, Float32MultiArray
+from std_msgs.msg import String, Float32MultiArray, Int8
 import sys
 import threading
 import time
@@ -47,7 +47,11 @@ class DroneController:
         self.current_pose = PoseStamped()
         self.position_available = False  # 位置信息是否可用
         self.position_lock = threading.Lock()  # 位置数据的线程锁
-        
+
+        # 当前Iris状态
+        self.current_iris_status = Int8()
+        self.current_iris_status.data = 0
+
         # ROS初始化
         rospy.init_node(f'{multirotor_type}_{multirotor_id}_velocity_controller')
         
@@ -57,10 +61,13 @@ class DroneController:
         # 或者也支持Twist格式的速度命令
         self.vel_cmd_twist_sub = rospy.Subscriber('/vel_cmd_twist', Twist, self.vel_cmd_twist_callback)
         
-        # 订阅位置信息 (参考get_local_pose.py的发布话题)
+        # 订阅位置信息 - 期待PoseStamped格式
         self.pose_sub = rospy.Subscriber(f'{multirotor_type}_{multirotor_id}/mavros/vision_pose/pose', 
                                         PoseStamped, self.pose_callback)
-        
+
+
+        self.iris_status_pub = rospy.Publisher(f'zhihang2025/iris/status', Int8, queue_size=1)
+
         # 发布速度命令
         if control_type == 'vel':
             self.cmd_vel_pub = rospy.Publisher(f'/xtdrone/{multirotor_type}_{multirotor_id}/cmd_vel_flu', Twist, queue_size=1)
@@ -86,7 +93,8 @@ class DroneController:
         
         # 定时发布当前速度命令
         self.cmd_timer = rospy.Timer(rospy.Duration(0.1), self.publish_velocity_command)
-    
+        self.iris_status_timer = rospy.Timer(rospy.Duration(0.1), self.publish_iris_status)
+
     def vel_cmd_callback(self, msg):
         """
         处理来自/vel_cmd话题的速度命令 (Float32MultiArray格式)
@@ -153,6 +161,12 @@ class DroneController:
         with self.position_lock:
             return (self.current_pose.pose, self.position_available)
     
+    def publish_iris_status(self, event):
+        """
+        发布Iris状态信息
+        """
+        self.iris_status_pub.publish(self.current_iris_status)
+
     def get_position_xyz(self):
         """
         获取当前位置的x,y,z坐标

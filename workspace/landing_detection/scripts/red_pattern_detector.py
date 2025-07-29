@@ -18,11 +18,18 @@ class RedPatternDetector:
         # 订阅图像话题
         self.image_sub = rospy.Subscriber('/iris_0/camera/image_raw', Image, self.image_callback)
         
+        # 订阅YOLO11红色目标检测结果作为备用
+        self.yolo_sub = rospy.Subscriber('/yolo11/position/red', Point, self.yolo_callback)
+        
         # 发布降落点坐标
         self.target_pub = rospy.Publisher('/landing_target_red', PointStamped, queue_size=1)
         
         # 发布调试图像
         self.debug_pub = rospy.Publisher('/landing_debug_red', Image, queue_size=1)
+        
+        # YOLO11检测结果缓存
+        self.latest_yolo_detection = None
+        self.yolo_detection_time = None
         
         # 红色检测参数 (HSV色彩空间)
         # 红色在HSV中有两个范围：0-10和170-180
@@ -43,6 +50,9 @@ class RedPatternDetector:
         
         # 检测参数
         self.red_area_threshold = 0.6  # 红色区域面积比例阈值
+        
+        # YOLO11备用检测参数
+        self.yolo_timeout = 2.0  # YOLO检测结果超时时间（秒）
         
         rospy.loginfo("Red pattern detector initialized")
     
@@ -299,12 +309,23 @@ class RedPatternDetector:
             cx, cy = candidate['center']
             radius = candidate['radius']
             
-            # 绘制外圆（红色）
-            cv2.circle(debug_image, (cx, cy), radius, (0, 255, 0), 3)
+            # 根据检测来源选择颜色
+            if candidate.get('source') == 'yolo11':
+                circle_color = (255, 165, 0)  # 橙色表示YOLO11检测
+                text_color = (255, 165, 0)
+                source_text = "YOLO11"
+            else:
+                circle_color = (0, 255, 0)    # 绿色表示主检测器
+                text_color = (0, 255, 255)
+                source_text = "CV"
             
-            # 绘制内圆估计位置
-            inner_radius = int(radius * 0.5)
-            cv2.circle(debug_image, (cx, cy), inner_radius, (255, 255, 0), 2)
+            # 绘制外圆
+            cv2.circle(debug_image, (cx, cy), radius, circle_color, 3)
+            
+            # 绘制内圆估计位置（仅对主检测器）
+            if candidate.get('source') != 'yolo11':
+                inner_radius = int(radius * 0.5)
+                cv2.circle(debug_image, (cx, cy), inner_radius, (255, 255, 0), 2)
             
             # 绘制中心点
             cv2.circle(debug_image, (cx, cy), 5, (0, 0, 255), -1)
@@ -316,6 +337,7 @@ class RedPatternDetector:
             
             # 显示得分信息
             info_text = [
+                f"Source: {source_text}",
                 f"Total: {candidate['total_score']:.2f}",
                 f"Red ratio: {candidate['red_ratio']:.2f}",
                 f"White: {candidate['white_score']:.2f}",
@@ -324,8 +346,8 @@ class RedPatternDetector:
             ]
             
             for i, text in enumerate(info_text):
-                cv2.putText(debug_image, text, (cx - 100, cy - radius - 60 + i * 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.putText(debug_image, text, (cx - 100, cy - radius - 80 + i * 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
         
         return debug_image
     
@@ -340,6 +362,14 @@ class RedPatternDetector:
             # 检测红色降落平台
             candidate, red_mask, white_mask = self.detect_red_circle(cv_image)
             
+            # 如果主检测器没有检测到目标，尝试使用YOLO11备用检测
+            if candidate is None:
+                candidate = self.use_yolo_as_backup()
+                # 为YOLO11检测创建空的掩码用于调试显示
+                if candidate is not None:
+                    red_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
+                    white_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
+            
             # 发布结果
             if candidate:
                 target_msg = PointStamped()
@@ -352,9 +382,14 @@ class RedPatternDetector:
                 
                 self.target_pub.publish(target_msg)
                 
-                rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
+                # 根据检测来源显示不同的日志信息
+                source = candidate.get('source', 'cv')
+                if source == 'yolo11':
+                    rospy.loginfo(f"Red platform detected via YOLO11 at {candidate['center']} with confidence {candidate['total_score']:.2f}")
+                else:
+                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
-                rospy.logwarn("No red platform detected")
+                rospy.logwarn("No red platform detected by either CV or YOLO11")
             
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate, red_mask, white_mask)
@@ -367,6 +402,49 @@ class RedPatternDetector:
     def run(self):
         rospy.loginfo("Red pattern detector running...")
         rospy.spin()
+    
+    def yolo_callback(self, msg):
+        """
+        YOLO11红色目标检测结果回调函数
+        """
+        self.latest_yolo_detection = msg
+        self.yolo_detection_time = rospy.Time.now()
+        rospy.logdebug(f"Received YOLO11 detection: x={msg.x}, y={msg.y}, z={msg.z}")
+    
+    def is_yolo_detection_valid(self):
+        """
+        检查YOLO11检测结果是否有效（未超时）
+        """
+        if self.latest_yolo_detection is None or self.yolo_detection_time is None:
+            return False
+        
+        current_time = rospy.Time.now()
+        time_diff = (current_time - self.yolo_detection_time).to_sec()
+        
+        return time_diff <= self.yolo_timeout
+    
+    def use_yolo_as_backup(self):
+        """
+        使用YOLO11检测结果作为备用
+        """
+        if not self.is_yolo_detection_valid():
+            return None
+        
+        # 创建候选对象，格式与主检测器一致
+        yolo_candidate = {
+            'center': (int(self.latest_yolo_detection.x), int(self.latest_yolo_detection.y)),
+            'radius': 50,  # 默认半径，可以根据需要调整
+            'red_ratio': 0.7,  # 假设YOLO检测到的是合格的红色目标
+            'white_score': 0.5,  # 中等白色得分
+            'cross_score': 0.5,  # 中等十字得分
+            'circularity': 0.8,  # 假设YOLO检测到的目标圆形度较好
+            'total_score': float(self.latest_yolo_detection.z) if self.latest_yolo_detection.z > 0 else 0.6,  # 使用z值作为置信度
+            'source': 'yolo11'  # 标记数据来源
+        }
+        
+        rospy.loginfo(f"Using YOLO11 backup detection at ({yolo_candidate['center'][0]}, {yolo_candidate['center'][1]}) with confidence {yolo_candidate['total_score']:.2f}")
+        
+        return yolo_candidate
 
 if __name__ == '__main__':
     try:
