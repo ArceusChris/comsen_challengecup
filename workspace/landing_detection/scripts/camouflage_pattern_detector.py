@@ -18,11 +18,18 @@ class CamouflagePatternDetector:
         # 订阅图像话题
         self.image_sub = rospy.Subscriber('/iris_0/camera/image_raw', Image, self.image_callback)
         
+        # 订阅YOLO11白色目标检测结果作为备用
+        self.yolo_sub = rospy.Subscriber('/yolo11/position/white', Point, self.yolo_callback)
+        
         # 发布降落点坐标
         self.target_pub = rospy.Publisher('/landing_target_camo', PointStamped, queue_size=1)
         
         # 发布调试图像
         self.debug_pub = rospy.Publisher('/landing_debug_camo', Image, queue_size=1)
+        
+        # YOLO11检测结果缓存
+        self.latest_yolo_detection = None
+        self.yolo_detection_time = None
         
         # 检测参数
         self.white_threshold = 200  # 白色阈值
@@ -34,6 +41,9 @@ class CamouflagePatternDetector:
         self.texture_window_size = 15  # 纹理分析窗口大小
         self.edge_threshold = 50  # 边缘检测阈值
         self.circularity_threshold = 0.6  # 圆形度阈值
+        
+        # YOLO11备用检测参数
+        self.yolo_timeout = 2.0  # YOLO检测结果超时时间（秒）
         
         rospy.loginfo("Camouflage pattern detector initialized")
     
@@ -300,8 +310,18 @@ class CamouflagePatternDetector:
             cx, cy = candidate['center']
             radius = candidate['radius']
             
+            # 根据检测来源选择颜色
+            if candidate.get('source') == 'yolo11':
+                circle_color = (255, 165, 0)  # 橙色表示YOLO11检测
+                text_color = (255, 165, 0)
+                source_text = "YOLO11"
+            else:
+                circle_color = (0, 255, 0)    # 绿色表示主检测器
+                text_color = (0, 255, 255)
+                source_text = "CV"
+            
             # 绘制外圆
-            cv2.circle(debug_image, (cx, cy), radius, (0, 255, 0), 3)
+            cv2.circle(debug_image, (cx, cy), radius, circle_color, 3)
             
             # 绘制中心点
             cv2.circle(debug_image, (cx, cy), 5, (0, 0, 255), -1)
@@ -313,6 +333,7 @@ class CamouflagePatternDetector:
             
             # 显示得分信息
             info_text = [
+                f"Source: {source_text}",
                 f"Total: {candidate['total_score']:.2f}",
                 f"Texture: {candidate['texture_score']:.2f}",
                 f"White: {candidate['white_score']:.2f}",
@@ -320,8 +341,8 @@ class CamouflagePatternDetector:
             ]
             
             for i, text in enumerate(info_text):
-                cv2.putText(debug_image, text, (cx - 80, cy - radius - 40 + i * 20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                cv2.putText(debug_image, text, (cx - 80, cy - radius - 60 + i * 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1)
         
         return debug_image
     
@@ -336,6 +357,10 @@ class CamouflagePatternDetector:
             # 检测迷彩降落平台
             candidate = self.detect_camouflage_circle(cv_image)
             
+            # 如果主检测器没有检测到目标，尝试使用YOLO11备用检测
+            if candidate is None:
+                candidate = self.use_yolo_as_backup()
+            
             # 发布结果
             if candidate:
                 target_msg = PointStamped()
@@ -348,9 +373,14 @@ class CamouflagePatternDetector:
                 
                 self.target_pub.publish(target_msg)
                 
-                rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
+                # 根据检测来源显示不同的日志信息
+                source = candidate.get('source', 'cv')
+                if source == 'yolo11':
+                    rospy.loginfo(f"Camouflage platform detected via YOLO11 white at {candidate['center']} with confidence {candidate['total_score']:.2f}")
+                else:
+                    rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
-                rospy.logwarn("No camouflage platform detected")
+                rospy.logwarn("No camouflage platform detected by either CV or YOLO11")
             
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate)
@@ -359,6 +389,48 @@ class CamouflagePatternDetector:
             
         except Exception as e:
             rospy.logerr(f"Error in camouflage detector: {e}")
+    
+    def yolo_callback(self, msg):
+        """
+        YOLO11白色目标检测结果回调函数
+        """
+        self.latest_yolo_detection = msg
+        self.yolo_detection_time = rospy.Time.now()
+        rospy.logdebug(f"Received YOLO11 white detection: x={msg.x}, y={msg.y}, z={msg.z}")
+    
+    def is_yolo_detection_valid(self):
+        """
+        检查YOLO11检测结果是否有效（未超时）
+        """
+        if self.latest_yolo_detection is None or self.yolo_detection_time is None:
+            return False
+        
+        current_time = rospy.Time.now()
+        time_diff = (current_time - self.yolo_detection_time).to_sec()
+        
+        return time_diff <= self.yolo_timeout
+    
+    def use_yolo_as_backup(self):
+        """
+        使用YOLO11检测结果作为备用
+        """
+        if not self.is_yolo_detection_valid():
+            return None
+        
+        # 创建候选对象，格式与主检测器一致
+        yolo_candidate = {
+            'center': (int(self.latest_yolo_detection.x), int(self.latest_yolo_detection.y)),
+            'radius': 50,  # 默认半径，可以根据需要调整
+            'texture_score': 0.7,  # 假设YOLO检测到的是合格的迷彩纹理
+            'white_score': 0.8,  # 较高的白色得分，因为YOLO专门检测白色目标
+            'cross_score': 0.6,  # 中等十字得分
+            'total_score': float(self.latest_yolo_detection.z) if self.latest_yolo_detection.z > 0 else 0.65,  # 使用z值作为置信度
+            'source': 'yolo11'  # 标记数据来源
+        }
+        
+        rospy.loginfo(f"Using YOLO11 backup detection for white target at ({yolo_candidate['center'][0]}, {yolo_candidate['center'][1]}) with confidence {yolo_candidate['total_score']:.2f}")
+        
+        return yolo_candidate
     
     def run(self):
         rospy.loginfo("Camouflage pattern detector running...")
