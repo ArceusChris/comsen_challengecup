@@ -315,7 +315,7 @@ start_tf_publisher() {
     log_step "启动坐标变换发布..."
     
     gnome-terminal --tab --title="坐标变换发布" -- bash -c "
-        cd /root/workspace/tf_transform
+        cd ~/workspace/tf_transform
         source ~/.bashrc
         python3 mavros_pose_to_tf.py
         exec bash
@@ -323,6 +323,86 @@ start_tf_publisher() {
     
     sleep 2
     log_info "坐标变换发布启动完成"
+}
+
+# 启动坐标变换发布
+start_vtol_control() {
+    log_step "启动VTOL控制..."
+    
+    gnome-terminal --tab --title="VTOL控制" -- bash -c "
+        cd ~/workspace/vtol_control
+        source ~/.bashrc
+        python3 vtol_demo.py
+        exec bash
+    " &
+    
+    sleep 2
+    log_info "VTOL控制启动完成"
+}
+
+start_iris_control() {
+    log_step "启动iris控制..."
+    
+    gnome-terminal --tab --title="iris控制" -- bash -c "
+        cd ~/workspace/iris_control
+        source ~/.bashrc
+        python3 multirotor_control.py iris 0 vel
+        exec bash
+    " &
+    
+    sleep 2
+    log_info "iris控制启动完成"
+}
+
+start_iris_localization() {
+    log_step "启动iris定位..."
+    
+    gnome-terminal --tab --title="iris定位" -- bash -c "
+        cd ~/workspace/iris_control
+        source ~/.bashrc
+        python3 get_local_pose.py iris 1
+        exec bash
+    " &
+    
+    sleep 2
+    log_info "iris定位启动完成"
+}
+
+start_landing_detection() {
+    log_step "启动iris着陆检测..."
+    gnome-terminal --tab --title="iris着陆检测" -- bash -c "
+        source ~/.bashrc
+        cd ~/catkin_ws
+        source devel/setup.bash
+        roslaunch landing_detection multi_pattern_detection.launch
+        exec bash
+    " &
+    sleep 2
+    log_info "iris着陆检测启动完成"
+}
+
+start_vtol_yolo_detection() {
+    log_step "启动vtol yolo检测..."
+    gnome-terminal --tab --title="vtol yolo检测" -- bash -c "
+        source ~/.bashrc
+        cd ~/workspace/perception
+        python3 yolo11_inference.py _aircraft_type:=standard_vtol
+        exec bash
+    " &
+    sleep 2
+    log_info "vtol yolo检测启动完成"
+}
+
+start_iris_yolo_detection() {
+    log_step "启动iris yolo检测..."
+    gnome-terminal --tab --title="iris yolo检测" -- bash -c "
+        source ~/.bashrc
+        cd ~/workspace/perception
+        python3 yolo11_inference.py _aircraft_type:=iris
+        exec bash
+    " &
+    sleep 2
+    log_info "iris yolo检测启动完成"
 }
 
 # 启动数据记录
@@ -615,6 +695,11 @@ main() {
     configure_px4_params
     start_virtual_rc
     start_tf_publisher
+    start_iris_control
+    start_vtol_control
+    start_vtol_yolo_detection
+    start_iris_yolo_detection
+    start_landing_detection
     
     # 检查服务状态
     sleep 10

@@ -18,7 +18,8 @@ import rospy
 import cv2
 import numpy as np
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, PointField
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Point, Pose
+from std_msgs.msg import Int8, Header
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 import os
@@ -58,7 +59,9 @@ class YOLO11InferenceNode:
             return
         
         # 其他通用参数
-        self.output_topic = rospy.get_param('~output_topic', '/yolo11/detection_image')
+        # 根据机型配置检测图像输出话题
+        default_output_topic = f'/{self.aircraft_type}_0/yolo11/detection_image'
+        self.output_topic = rospy.get_param('~output_topic', default_output_topic)
         self.model_path = rospy.get_param('~model_path', 'models/yolo11n_original.pt')
         self.confidence_threshold = rospy.get_param('~confidence_threshold', 0.5)
         self.iou_threshold = rospy.get_param('~iou_threshold', 0.45)
@@ -72,6 +75,10 @@ class YOLO11InferenceNode:
         self.current_pose = None
         self.camera_info = None
         self.data_lock = threading.Lock()
+        
+        # VTOL着陆标志状态 (用于控制点云发布)
+        self.vtol_land_flag = 0  # 默认为0
+        self.vtol_flag_lock = threading.Lock()
         
         # 预初始化TF2系统
         self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
@@ -97,6 +104,37 @@ class YOLO11InferenceNode:
         self.image_sub = rospy.Subscriber(self.input_topic, Image, self.image_callback)
         self.pose_sub = rospy.Subscriber(self.pose_topic, PoseStamped, self.pose_callback)
         self.camera_info_sub = rospy.Subscriber(self.camera_info_topic, CameraInfo, self.camera_info_callback)
+        
+        # 订阅VTOL着陆标志（仅在VTOL机型时）
+        if self.aircraft_type == 'standard_vtol':
+            self.vtol_flag_sub = rospy.Subscriber('/zhihang2025/vtol_land_sub/done', Int8, self.vtol_flag_callback)
+            rospy.loginfo("已订阅VTOL着陆标志话题: /zhihang2025/vtol_land_sub/done")
+        
+        # 创建实时位置发布者
+        self.position_pubs = {}
+        for target_name in self.target_points.keys():
+            topic_name = f"/yolo11/position/{target_name}"
+            self.position_pubs[target_name] = rospy.Publisher(topic_name, Point, queue_size=1)
+            rospy.loginfo(f"实时位置发布话题: {topic_name}")
+        
+        # 创建位姿估计发布者（用于发布平均位置）
+        self.pose_estimation_pubs = {}
+        for target_name in self.target_points.keys():
+            topic_name = f"/yolo11/pose_estimation/{target_name}"
+            self.pose_estimation_pubs[target_name] = rospy.Publisher(topic_name, Point, queue_size=1)
+            rospy.loginfo(f"位姿估计发布话题: {topic_name}")
+        
+        # 创建VTOL目标位姿发布者（仅在VTOL机型时）
+        self.vtol_target_pose_pubs = {}
+        if self.aircraft_type == 'standard_vtol':
+            target_topics = {
+                'red': '/zhihang2025/first_man/pose',
+                'yellow': '/zhihang2025/second_man/pose',
+                'white': '/zhihang2025/third_man/pose'
+            }
+            for target_name, topic_name in target_topics.items():
+                self.vtol_target_pose_pubs[target_name] = rospy.Publisher(topic_name, Pose, queue_size=1)
+                rospy.loginfo(f"VTOL目标位姿发布话题: {topic_name}")
         
         # 创建点云发布者
         self.pointcloud_pubs = {}
@@ -232,9 +270,37 @@ class YOLO11InferenceNode:
                        (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
                        0.5, (0, 255, 255), 1, cv2.LINE_AA)
             
+            # 显示VTOL状态信息（仅VTOL机型）
+            y_offset = 90
+            if self.aircraft_type == 'standard_vtol':
+                with self.vtol_flag_lock:
+                    vtol_status_text = f"VTOL标志: {self.vtol_land_flag}"
+                    pointcloud_status = "启用" if self.should_publish_pointcloud() else "禁用"
+                    status_text = f"点云发布: {pointcloud_status}"
+                    
+                    # 根据标志状态显示不同的信息
+                    if self.vtol_land_flag == 2:
+                        mode_text = "模式: 数据收集中"
+                    elif self.vtol_land_flag == 3:
+                        mode_text = "模式: 已发布目标位姿"
+                    else:
+                        mode_text = "模式: 实时位置追踪"
+                
+                cv2.putText(annotated_image, vtol_status_text, 
+                           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.5, (255, 0, 255), 1, cv2.LINE_AA)
+                y_offset += 25
+                cv2.putText(annotated_image, status_text, 
+                           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.5, (255, 0, 255), 1, cv2.LINE_AA)
+                y_offset += 25
+                cv2.putText(annotated_image, mode_text, 
+                           (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.5, (255, 0, 255), 1, cv2.LINE_AA)
+                y_offset += 25
+            
             # 显示点集统计信息
             summary = self.get_target_points_summary()
-            y_offset = 90
             for target_name, info in summary.items():
                 if info['count'] > 0:
                     stats_text = f"{target_name}: {info['count']} 个点"
@@ -273,6 +339,23 @@ class YOLO11InferenceNode:
             self.camera_info = msg
             rospy.loginfo_once("已获取相机内参信息")
     
+    def vtol_flag_callback(self, msg):
+        """VTOL着陆标志回调函数"""
+        with self.vtol_flag_lock:
+            old_flag = self.vtol_land_flag
+            self.vtol_land_flag = msg.data
+            if old_flag != self.vtol_land_flag:
+                rospy.loginfo(f"VTOL着陆标志更新: {old_flag} -> {self.vtol_land_flag}")
+                if self.vtol_land_flag == 2:
+                    rospy.loginfo("VTOL着陆完成，开始发布点云数据")
+                elif self.vtol_land_flag == 3 and old_flag == 2:
+                    rospy.loginfo("VTOL标志从2变为3，计算并发布点云平均位置和目标位姿")
+                    self.calculate_and_publish_average_positions()
+                    # 发布目标位姿到VTOL话题
+                    self.publish_vtol_target_poses()
+                else:
+                    rospy.loginfo("VTOL着陆未完成，仅发布实时位置数据")
+    
     def pixel_to_world_coordinate(self, pixel_x, pixel_y, pose, camera_info):
         """将像素坐标转换为世界坐标（假设物体在地面上，Z=0）"""
         if camera_info is None or pose is None:
@@ -289,7 +372,7 @@ class YOLO11InferenceNode:
             # 将像素坐标转换为相机坐标系的齐次坐标（向右为x轴正方向，向下为y轴正方向）
             x0 = (pixel_x - cx) / fx
             y0 = (pixel_y - cy) / fy
-            # 相机坐标系下的齐次坐标
+            # 相机坐标系下的齐 homogeneous坐标
             camera_point = np.array([x0, y0, 1.0])
             
             # 第二步：使用TF2将相机坐标系的两个点转换到地图坐标系
@@ -421,12 +504,131 @@ class YOLO11InferenceNode:
                         'pixel_coords': [center_x, center_y]
                     })
                 
+                # 发布实时位置
+                self.publish_realtime_position(class_name, world_pos)
+                
                 rospy.loginfo(f"检测到{class_name}，世界坐标: [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]")
                 rospy.loginfo(f"当前{class_name}点集大小: {len(self.target_points[class_name])}")
         
-        # 处理完所有检测后，发布点云数据
-        self.publish_pointclouds()
+        # 处理完所有检测后，根据条件发布点云数据
+        self.conditional_publish_pointclouds()
     
+    def calculate_and_publish_average_positions(self):
+        """计算三个目标的点云平均位置并发布"""
+        rospy.loginfo("开始计算目标点云的平均位置...")
+        
+        with self.data_lock:
+            for target_name, points in self.target_points.items():
+                if points:
+                    # 提取所有位置数据
+                    positions = np.array([point['position'] for point in points])
+                    
+                    # 计算平均位置
+                    avg_position = np.mean(positions, axis=0)
+                    
+                    # 计算标准差（用于评估数据质量）
+                    std_position = np.std(positions, axis=0)
+                    
+                    rospy.loginfo(f"{target_name}目标统计:")
+                    rospy.loginfo(f"  点云数量: {len(points)}")
+                    rospy.loginfo(f"  平均位置: [{avg_position[0]:.3f}, {avg_position[1]:.3f}, {avg_position[2]:.3f}]")
+                    rospy.loginfo(f"  位置标准差: [{std_position[0]:.3f}, {std_position[1]:.3f}, {std_position[2]:.3f}]")
+                    
+                    # 发布平均位置到位姿估计话题
+                    if target_name in self.pose_estimation_pubs:
+                        avg_msg = Point()
+                        avg_msg.x = avg_position[0]
+                        avg_msg.y = avg_position[1]
+                        avg_msg.z = avg_position[2]
+                        
+                        self.pose_estimation_pubs[target_name].publish(avg_msg)
+                        rospy.loginfo(f"已发布{target_name}目标的平均位置到 /yolo11/pose_estimation/{target_name}")
+                else:
+                    rospy.logwarn(f"{target_name}目标没有点云数据，无法计算平均位置")
+        
+        rospy.loginfo("平均位置计算和发布完成")
+    
+    def publish_vtol_target_poses(self):
+        """发布VTOL目标位姿到指定话题"""
+        if self.aircraft_type != 'standard_vtol':
+            rospy.logwarn("非VTOL机型，跳过目标位姿发布")
+            return
+        
+        rospy.loginfo("开始发布VTOL目标位姿...")
+        
+        with self.data_lock:
+            for target_name, points in self.target_points.items():
+                if points and target_name in self.vtol_target_pose_pubs:
+                    # 计算平均位置
+                    positions = np.array([point['position'] for point in points])
+                    avg_position = np.mean(positions, axis=0)
+                    
+                    # 创建Pose消息
+                    pose_msg = Pose()
+                    pose_msg.position.x = avg_position[0]
+                    pose_msg.position.y = avg_position[1]
+                    pose_msg.position.z = avg_position[2]
+                    
+                    # 设置默认朝向（单位四元数，表示无旋转）
+                    pose_msg.orientation.x = 0.0
+                    pose_msg.orientation.y = 0.0
+                    pose_msg.orientation.z = 0.0
+                    pose_msg.orientation.w = 1.0
+                    
+                    # 发布到对应话题
+                    self.vtol_target_pose_pubs[target_name].publish(pose_msg)
+                    
+                    # 获取话题名称用于日志
+                    topic_mapping = {
+                        'red': '/zhihang2025/first_man/pose',
+                        'yellow': '/zhihang2025/second_man/pose',
+                        'white': '/zhihang2025/third_man/pose'
+                    }
+                    topic_name = topic_mapping.get(target_name, 'unknown')
+                    
+                    rospy.loginfo(f"已发布{target_name}目标位姿到 {topic_name}")
+                    rospy.loginfo(f"  位置: [{avg_position[0]:.3f}, {avg_position[1]:.3f}, {avg_position[2]:.3f}]")
+                    rospy.loginfo(f"  基于 {len(points)} 个点的平均值")
+                else:
+                    if not points:
+                        rospy.logwarn(f"{target_name}目标没有点云数据，无法发布位姿")
+                    elif target_name not in self.vtol_target_pose_pubs:
+                        rospy.logwarn(f"{target_name}目标没有对应的发布者")
+        
+        rospy.loginfo("VTOL目标位姿发布完成")
+
+    def get_target_statistics(self):
+        """获取目标统计信息（包括平均位置）"""
+        with self.data_lock:
+            stats = {}
+            for target_name, points in self.target_points.items():
+                if points:
+                    positions = np.array([point['position'] for point in points])
+                    timestamps = [point['timestamp'] for point in points]
+                    
+                    stats[target_name] = {
+                        'count': len(points),
+                        'mean_position': np.mean(positions, axis=0).tolist(),
+                        'std_position': np.std(positions, axis=0).tolist(),
+                        'min_position': np.min(positions, axis=0).tolist(),
+                        'max_position': np.max(positions, axis=0).tolist(),
+                        'time_span': max(timestamps) - min(timestamps) if timestamps else 0,
+                        'latest_timestamp': max(timestamps) if timestamps else None,
+                        'oldest_timestamp': min(timestamps) if timestamps else None
+                    }
+                else:
+                    stats[target_name] = {
+                        'count': 0,
+                        'mean_position': [0.0, 0.0, 0.0],
+                        'std_position': [0.0, 0.0, 0.0],
+                        'min_position': [0.0, 0.0, 0.0],
+                        'max_position': [0.0, 0.0, 0.0],
+                        'time_span': 0,
+                        'latest_timestamp': None,
+                        'oldest_timestamp': None
+                    }
+            return stats
+
     def get_target_points_summary(self):
         """获取目标点集摘要信息"""
         with self.data_lock:
@@ -454,7 +656,7 @@ class YOLO11InferenceNode:
                 rospy.logwarn(f"未知的目标名称: {target_name}")
         
         # 发布更新后的点云（可能是空的）
-        self.publish_pointclouds()
+        self.conditional_publish_pointclouds()
     
     def run(self):
         """运行节点"""
@@ -549,6 +751,36 @@ class YOLO11InferenceNode:
         
         return pointcloud
     
+    def publish_realtime_position(self, target_name, world_pos):
+        """发布目标的实时位置"""
+        if target_name in self.position_pubs:
+            position_msg = Point()
+            position_msg.x = world_pos[0]
+            position_msg.y = world_pos[1]
+            position_msg.z = world_pos[2]
+            self.position_pubs[target_name].publish(position_msg)
+    
+    def should_publish_pointcloud(self):
+        """判断是否应该发布点云数据"""
+        # 对于非VTOL机型，始终发布点云
+        if self.aircraft_type != 'standard_vtol':
+            return False
+        
+        # 对于VTOL机型，只有当标志为2时才发布点云
+        with self.vtol_flag_lock:
+            return self.vtol_land_flag == 2
+    
+    def conditional_publish_pointclouds(self):
+        """根据条件发布点云数据"""
+        if not self.publish_pointcloud:
+            return
+        
+        # 检查是否应该发布点云
+        if self.should_publish_pointcloud():
+            self.publish_pointclouds()
+        else:
+            rospy.logdebug_throttle(10.0, f"VTOL机型，标志={self.vtol_land_flag}，不发布点云数据")
+    
     def publish_pointclouds(self):
         """发布所有目标的点云数据"""
         if not self.publish_pointcloud:
@@ -563,7 +795,7 @@ class YOLO11InferenceNode:
     
     def pointcloud_timer_callback(self, event):
         """定时发布点云数据"""
-        self.publish_pointclouds()
+        self.conditional_publish_pointclouds()
     
     def get_pointcloud_statistics(self):
         """获取点云统计信息"""
@@ -613,27 +845,7 @@ class YOLO11InferenceNode:
         if removed_count > 0:
             rospy.loginfo(f"删除了 {removed_count} 个过期点")
             # 发布更新后的点云
-            self.publish_pointclouds()
-
-    def prune_old_points(self, max_age_seconds=300):
-        """删除过期的点（默认5分钟）"""
-        current_time = rospy.Time.now().to_sec()
-        removed_count = 0
-        
-        with self.data_lock:
-            for target_name, points in self.target_points.items():
-                original_count = len(points)
-                # 保留未过期的点
-                self.target_points[target_name] = [
-                    point for point in points 
-                    if (current_time - point['timestamp']) <= max_age_seconds
-                ]
-                removed_count += original_count - len(self.target_points[target_name])
-        
-        if removed_count > 0:
-            rospy.loginfo(f"删除了 {removed_count} 个过期点")
-            # 发布更新后的点云
-            self.publish_pointclouds()
+            self.conditional_publish_pointclouds()
 
 def main():
     """主函数"""
