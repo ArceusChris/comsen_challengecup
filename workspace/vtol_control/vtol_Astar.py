@@ -187,22 +187,15 @@ class VTOLAstarPlanner:
         Returns:
             路径点列表 [(x1, y1), (x2, y2), ...] 或 None（如果无法找到路径）
         """
-        print(f"开始A*路径规划:")
-        print(f"起点: ({start_pos[0]}, {start_pos[1]})")
-        print(f"终点: ({goal_pos[0]}, {goal_pos[1]})")
-        print(f"网格大小: {self.grid_size}m")
-        
         # 转换为网格坐标
         start_grid = self.world_to_grid(start_pos[0], start_pos[1])
         goal_grid = self.world_to_grid(goal_pos[0], goal_pos[1])
         
         # 检查起点和终点是否有效
         if not self.is_valid_position(start_grid[0], start_grid[1]):
-            print(f"❌ 起点 {start_pos} 位置无效（可能在障碍物内）")
             return None
         
         if not self.is_valid_position(goal_grid[0], goal_grid[1]):
-            print(f"❌ 终点 {goal_pos} 位置无效（可能在障碍物内）")
             return None
         
         # 初始化A*算法
@@ -229,13 +222,8 @@ class VTOLAstarPlanner:
             
             # 检查是否到达目标
             if current_node.x == goal_node.x and current_node.y == goal_node.y:
-                print(f"✅ 路径规划成功！访问了 {nodes_visited} 个节点")
                 path = self.reconstruct_path(current_node)
-                
-                # 路径平滑处理
                 smoothed_path = self.smooth_path(path)
-                print(f"原始路径点数: {len(path)}, 平滑后: {len(smoothed_path)}")
-                
                 return smoothed_path
             
             # 探索邻居节点
@@ -267,23 +255,13 @@ class VTOLAstarPlanner:
                     existing_node.parent = neighbor.parent
             
             # 防止无限循环
-            if nodes_visited > 100000:
-                print(f"⚠️ 路径搜索节点数超限，停止搜索")
+            if nodes_visited > 50000:
                 break
         
-        print(f"❌ 无法找到路径！访问了 {nodes_visited} 个节点")
         return None
     
     def visualize_path(self, start_pos, goal_pos, path=None, save_file=None):
-        """
-        可视化路径规划结果
-        
-        Args:
-            start_pos: 起点坐标
-            goal_pos: 终点坐标
-            path: 规划的路径
-            save_file: 保存图片的文件名
-        """
+        """可视化路径规划结果"""
         fig, ax = plt.subplots(1, 1, figsize=(12, 8))
         
         # 绘制地图区域
@@ -299,12 +277,6 @@ class VTOLAstarPlanner:
             path_y = [p[1] for p in path]
             ax.plot(path_x, path_y, 'b-', linewidth=3, label=f'A*路径 ({len(path)}点)')
             
-            # 在路径点上标记序号
-            for i, (x, y) in enumerate(path):
-                if i % 3 == 0 or i == len(path) - 1:  # 每3个点标记一次
-                    ax.text(x, y + 15, str(i), fontsize=8, ha='center', 
-                           bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
-            
             # 计算路径长度
             total_distance = 0
             for i in range(len(path) - 1):
@@ -312,7 +284,7 @@ class VTOLAstarPlanner:
                 dy = path[i+1][1] - path[i][1]
                 total_distance += math.sqrt(dx*dx + dy*dy)
             
-            ax.set_title(f'VTOL A*路径规划 (网格:{self.grid_size}m, 长度:{total_distance:.1f}m)')
+            ax.set_title(f'VTOL A*路径规划 (长度:{total_distance:.1f}m)')
         else:
             ax.plot([start_pos[0], goal_pos[0]], [start_pos[1], goal_pos[1]], 
                    'r--', alpha=0.5, label='直线距离')
@@ -324,18 +296,13 @@ class VTOLAstarPlanner:
         ax.grid(True, alpha=0.3)
         ax.axis('equal')
         
-        # 保存图片
         if save_file:
             plt.savefig(save_file, dpi=300, bbox_inches='tight')
-            print(f"路径可视化已保存到: {save_file}")
         
         plt.show()
     
     def compare_with_direct_path(self, start_pos, goal_pos):
         """比较A*路径与直线路径"""
-        print("\n🔍 路径比较分析:")
-        print("="*50)
-        
         # 直线距离
         dx = goal_pos[0] - start_pos[0]
         dy = goal_pos[1] - start_pos[1]
@@ -343,9 +310,6 @@ class VTOLAstarPlanner:
         
         # 检查直线路径是否可行
         direct_feasible = self.is_line_clear(start_pos, goal_pos)
-        
-        print(f"直线距离: {direct_distance:.1f}m")
-        print(f"直线路径可行性: {'✅ 可行' if direct_feasible else '❌ 不可行（穿越障碍物）'}")
         
         # A*路径
         astar_path = self.plan_path(start_pos, goal_pos)
@@ -357,115 +321,28 @@ class VTOLAstarPlanner:
                 dy = astar_path[i+1][1] - astar_path[i][1]
                 astar_distance += math.sqrt(dx*dx + dy*dy)
             
-            print(f"A*路径距离: {astar_distance:.1f}m")
-            print(f"路径增长率: {(astar_distance/direct_distance-1)*100:.1f}%")
-            print(f"A*路径点数: {len(astar_path)}")
-            
             return astar_path, astar_distance, direct_distance
         else:
-            print("A*路径: 无可行路径")
             return None, None, direct_distance
-
-
-def test_astar_planning():
-    """测试A*路径规划功能"""
-    print("VTOL A*路径规划测试")
-    print("="*60)
-    
-    # 创建路径规划器
-    planner = VTOLAstarPlanner(grid_size=20)  # 20米网格
-    
-    # 显示地图信息
-    planner.map.print_map_summary()
-    
-    # 测试案例
-    test_cases = [
-        {
-            'name': '基本测试：旋翼区到北侧目标',
-            'start': (0, 0),
-            'goal': (1600, 200),
-            'description': '从旋翼区中心飞往北侧目标点，需要绕过居民区'
-        },
-        {
-            'name': '挑战测试：旋翼区到南侧目标',
-            'start': (0, 0),
-            'goal': (1600, -200),
-            'description': '从旋翼区中心飞往南侧目标点，需要绕过居民区'
-        },
-        {
-            'name': '穿越测试：横穿居民区',
-            'start': (1000, 0),
-            'goal': (1400, 0),
-            'description': '尝试穿越居民区中心，测试避障能力'
-        },
-        {
-            'name': '边界测试：沿地图边缘',
-            'start': (100, 900),
-            'goal': (1900, 900),
-            'description': '沿地图北边界飞行'
-        }
-    ]
-    
-    for i, test_case in enumerate(test_cases, 1):
-        print(f"\n🧪 测试 {i}: {test_case['name']}")
-        print(f"描述: {test_case['description']}")
-        print("-" * 50)
-        
-        start_pos = test_case['start']
-        goal_pos = test_case['goal']
-        
-        # 执行路径规划和比较
-        path, astar_dist, direct_dist = planner.compare_with_direct_path(start_pos, goal_pos)
-        
-        # 可视化结果
-        save_filename = f"astar_test_{i}_{test_case['name'].split('：')[0]}.png"
-        planner.visualize_path(start_pos, goal_pos, path, save_filename)
 
 
 def main():
     """主函数：默认测试案例"""
-    print("VTOL A*路径规划主程序")
-    print("="*60)
-    
     # 创建路径规划器
-    planner = VTOLAstarPlanner(grid_size=15)  # 15米网格，平衡精度和性能
+    planner = VTOLAstarPlanner(grid_size=15)
     
     # 默认测试：从旋翼区到北侧目标点
     start_pos = (0, 0)      # 旋翼区中心
     goal_pos = (1600, 200)  # 北侧目标点
     
-    print(f"默认测试案例:")
-    print(f"起点: {start_pos} (旋翼区中心)")
-    print(f"终点: {goal_pos} (北侧目标点)")
-    
-    # 显示地图信息
-    planner.map.print_map_summary()
-    
     # 执行路径规划
     path, astar_dist, direct_dist = planner.compare_with_direct_path(start_pos, goal_pos)
     
     # 可视化结果
-    planner.visualize_path(start_pos, goal_pos, path, "vtol_astar_default.png")
+    planner.visualize_path(start_pos, goal_pos, path, "vtol_astar_result.png")
     
-    print(f"\n🎯 规划总结:")
-    if path:
-        print(f"✅ 成功规划出安全路径")
-        print(f"✅ 路径避开了所有居民区")
-        print(f"✅ 路径可视化已生成")
-    else:
-        print(f"❌ 无法找到安全路径")
-    
-    print(f"\n💡 提示:")
-    print(f"- 调整grid_size参数可以平衡路径精度和计算效率")
-    print(f"- 使用test_astar_planning()函数可以运行更多测试案例")
-    print(f"- 路径会自动避开居民区和地图边界")
+    return path
 
 
 if __name__ == "__main__":
-    # 可以选择运行默认测试或完整测试套件
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == '--test':
-        test_astar_planning()
-    else:
-        main()
+    main()

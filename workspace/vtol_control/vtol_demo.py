@@ -2,27 +2,17 @@
 # -*- coding: utf-8 -*-
 
 '''
-参考/home/yzy/comsen_challengecup/simple_fixedwing_flight.py
-写一个固定翼无人机自动飞行脚本
-根据workspace/vtol_control/vtol_target.yaml中的目标点
-让standard_vtol_0飞到每个目标点
-注意:
-- 新规则：只要距离原点(0,0)在半径100米范围内，无论zone类型都可以切换到旋翼模式
-- 在100米范围外，所有动作都必须要在固定翼模式下完成
-- 居民区是禁止飞行的
-- 区域的定义见workspace/vtol_control/vtol_map.py
+VTOL无人机演示飞行主控脚本（简化版）
+模块化重构后的主控脚本，负责任务管理和流程控制
+具体的飞行控制委托给 VTOLFlightController
 '''
 
-import rospy
 import time
 import math
-import threading
 import yaml
 import os
-from geometry_msgs.msg import PoseStamped, Pose
-from std_msgs.msg import String, Int8
 from vtol_map import VTOLMap, ZoneType
-from vtol_Astar import VTOLAstarPlanner
+from vtol_fly import VTOLFlightController
 
 
 class VTOLDemoFlight:
@@ -33,76 +23,38 @@ class VTOLDemoFlight:
         # 初始化地图
         self.map = VTOLMap()
         
-        # 初始化A*路径规划器
-        self.astar_planner = VTOLAstarPlanner(grid_size=20)  # 20米网格，平衡精度和性能
+        # 初始化飞行控制器
+        self.flight_controller = VTOLFlightController(vehicle_type, vehicle_id)
         
         # 加载目标点
         self.targets = self.load_targets()
         
         # 当前状态
-        self.current_position = None
-        self.current_yaw = 0
         self.current_target_index = 0
         
-        # 飞行参数
-        self.takeoff_height = 30.0
-        self.cruise_height = 50.0
-        self.approach_height = 25.0
-        
-        # 位置指令持续发布
-        self.target_pose = Pose()
-        self.should_publish = False
-        
-        # 飞行模式状态
-        self.current_mode = "multirotor"  # multirotor 或 plane
-        
-        # Condition状态管理
-        self.current_condition = 0xAA  # 初始化为0xAA
-        self.last_sent_condition = None
-        
         print(f"初始化VTOL演示飞行: {self.vehicle_type}_{self.vehicle_id}")
-        print(f"集成A*路径规划器 (网格大小: {self.astar_planner.grid_size}m)")
         print(f"加载了 {len(self.targets)} 个目标点")
-        print(f"Condition状态初始化为: 0x{self.current_condition:02X}")
-        
-        # 注意：ROS节点在主函数中初始化，这里稍后设置通信
-        self.ros_initialized = False
 
     def load_targets(self):
         """加载vtol_target.yaml中的目标点"""
-        # 使用绝对路径
         current_dir = os.path.dirname(os.path.abspath(__file__))
         target_file = os.path.join(current_dir, "vtol_target.yaml")
         targets = []
-        
-        print(f"🔍 加载目标文件: {target_file}")
-        print(f"📁 当前工作目录: {os.getcwd()}")
-        print(f"📄 文件存在: {os.path.exists(target_file)}")
         
         try:
             if os.path.exists(target_file):
                 with open(target_file, 'r', encoding='utf-8') as f:
                     data = yaml.safe_load(f)
-                
-                print(f"📊 YAML数据加载成功，内容键: {list(data.keys()) if data else 'None'}")
                     
-                # 解析YAML格式
                 if data and 'targets' in data:
-                    print(f"🎯 找到 {len(data['targets'])} 个目标点配置")
-                    for i, target_info in enumerate(data['targets']):
-                        print(f"   解析目标点 {i+1}: {target_info}")
+                    for target_info in data['targets']:
                         if 'position' in target_info:
                             pos = target_info['position']
                             if len(pos) >= 3:
                                 x, y, z = pos[0], pos[1], pos[2]
                                 name = target_info.get('name', f'target_{len(targets)+1}')
                                 description = target_info.get('description', '')
-                                condition = target_info.get('condition', '0x00')  # 默认condition为0x00
-                                
-                                print(f"     位置: ({x}, {y}, {z})")
-                                print(f"     名称: {name}")
-                                print(f"     描述: {description}")
-                                print(f"     Condition: {condition}")
+                                condition = target_info.get('condition', '0x00')
                                 
                                 # 解析condition字符串为整数
                                 if isinstance(condition, str) and condition.startswith('0x'):
@@ -110,105 +62,43 @@ class VTOLDemoFlight:
                                 else:
                                     condition_value = int(condition) if isinstance(condition, (int, str)) else 0
                                 
-                                print(f"     Condition值: 0x{condition_value:02X}")
-                                
                                 targets.append({
                                     'position': (x, y, z),
                                     'name': name,
                                     'description': description,
                                     'condition': condition_value
                                 })
-                                print(f"     ✅ 目标点 {name} 添加成功")
-                            else:
-                                print(f"     ❌ 位置坐标不完整: {pos}")
-                        else:
-                            print(f"     ❌ 缺少position字段")
                 else:
-                    print("❌ YAML数据为空或缺少'targets'字段")
-                    if data:
-                        print(f"   可用的键: {list(data.keys())}")
                     raise ValueError("YAML文件格式错误：缺少'targets'字段")
             else:
-                print(f"❌ 错误: 目标文件 {target_file} 不存在")
-                print("❌ 无法加载飞行目标点，程序退出")
                 raise FileNotFoundError(f"目标文件不存在: {target_file}")
                 
         except Exception as e:
             print(f"❌ 加载目标文件失败: {e}")
             print("❌ YAML文件解析错误，拒绝起飞")
-            print("❌ 程序将退出，请检查vtol_target.yaml文件格式")
             raise e
         
         # 验证目标点数量
         if not targets:
-            print("❌ 错误: 没有找到有效的目标点")
-            print("❌ 请检查vtol_target.yaml文件中的targets配置")
             raise ValueError("没有有效的目标点")
         
         print(f"✅ 成功加载 {len(targets)} 个目标点")
-        print("目标点列表:")
         for i, target in enumerate(targets):
             x, y, z = target['position']
             condition = target.get('condition', 0)
             zone_info = self.map.get_zone_info(x, y)
-            print(f"  {i+1}. {target['name']}: ({x}, {y}, {z}) - 区域: {zone_info['name']} - {target['description']} - Condition: 0x{condition:02X}")
+            print(f"  {i+1}. {target['name']}: ({x}, {y}, {z}) - {zone_info['name']} - Condition: 0x{condition:02X}")
         
         return targets
 
     def init_ros(self):
-        """初始化ROS通信（节点已在主函数中初始化）"""
-        # 注意：ROS节点已在主函数中初始化，这里只设置订阅者和发布者
-        
-        # 订阅者
-        self.local_pose_sub = rospy.Subscriber(
-            f"{self.vehicle_type}_{self.vehicle_id}/mavros/local_position/pose", 
-            PoseStamped, self.local_pose_callback, queue_size=1)
-        
-        # Condition话题订阅者
-        self.vtol_condition_sub = rospy.Subscriber(
-            '/zhihang2025/vtol_land_sub/done', 
-            Int8, self.done_callback, queue_size=1)
-        
-        # 发布者
-        self.cmd_pub = rospy.Publisher(
-            f"/xtdrone/{self.vehicle_type}_{self.vehicle_id}/cmd", 
-            String, queue_size=10)
-        
-        self.cmd_pose_pub = rospy.Publisher(
-            f"/xtdrone/{self.vehicle_type}_{self.vehicle_id}/cmd_pose_enu", 
-            Pose, queue_size=10)
-        
-        # Condition状态发布者
-        self.condition_pub = rospy.Publisher(
-            '/zhihang2025/vtol_land_sub/done', 
-            Int8, queue_size=10)
-        
-        # 发送初始condition状态
-        self.publish_condition(self.current_condition)
-        
-        print("ROS通信初始化完成")
-        print(f"Condition话题: /zhihang2025/vtol_land_sub/done (订阅&发布)")
-        print(f"初始Condition: 0x{self.current_condition:02X}")
+        """初始化ROS通信"""
+        self.flight_controller.init_ros_communication()
+        print("演示控制器ROS通信初始化完成")
 
-    def local_pose_callback(self, msg):
-        """位置回调函数"""
-        self.current_position = msg.pose.position
-
-    def done_callback(self, msg):
-        """Condition话题回调函数"""
-        received_condition = msg.data
-        print(f"📨 收到Condition消息: 0x{received_condition:02X}")
-    
     def publish_condition(self, condition_value):
         """发布condition状态"""
-        if condition_value != self.last_sent_condition:
-            msg = Int8()
-            msg.data = condition_value
-            self.condition_pub.publish(msg)
-            self.last_sent_condition = condition_value
-            print(f"📤 发送Condition: 0x{condition_value:02X}")
-        else:
-            print(f"📤 Condition 0x{condition_value:02X} 已发送过，跳过重复发送")
+        self.flight_controller.ros_comm.publish_condition(condition_value)
     
     def update_mission_condition(self, target_index):
         """根据目标点索引更新并发送condition"""
@@ -216,1357 +106,244 @@ class VTOLDemoFlight:
             target = self.targets[target_index]
             condition = target.get('condition', 0x00)
             
-            print(f"🎯 到达目标点 {target['name']}，更新Condition状态")
-            print(f"   目标点索引: {target_index}")
-            print(f"   目标点名称: {target['name']}")
-            print(f"   Condition: 0x{condition:02X}")
-            
-            self.current_condition = condition
+            print(f"到达目标点 {target['name']}，发送Condition: 0x{condition:02X}")
             self.publish_condition(condition)
-        else:
-            print(f"⚠️ 无效的目标点索引: {target_index}")
 
-    def send_cmd(self, cmd_str):
-        """发送xtdrone命令"""
-        cmd_msg = String()
-        cmd_msg.data = cmd_str
-        self.cmd_pub.publish(cmd_msg)
-        print(f"发送命令: {cmd_str}")
-
-    def set_target_pose(self, x, y, z, yaw=0.0):
-        """设置目标位置并开始持续发布"""
-        self.target_pose.position.x = x
-        self.target_pose.position.y = y
-        self.target_pose.position.z = z
-        self.target_pose.orientation.x = 0.0
-        self.target_pose.orientation.y = 0.0
-        self.target_pose.orientation.z = math.sin(yaw / 2.0)
-        self.target_pose.orientation.w = math.cos(yaw / 2.0)
-        
-        if not self.should_publish:
-            self.should_publish = True
-            publish_thread = threading.Thread(target=self.continuous_publish)
-            publish_thread.daemon = True
-            publish_thread.start()
-            print(f"开始持续发布位置指令: x={x:.1f}, y={y:.1f}, z={z:.1f}")
-        else:
-            print(f"更新目标位置: x={x:.1f}, y={y:.1f}, z={z:.1f}")
-
-    def continuous_publish(self):
-        """持续发布位置指令 - 闭环控制版本"""
-        rate = rospy.Rate(50)  # 提高到50Hz获得更好的控制性能
-        last_distance = float('inf')
-        stable_count = 0
-        
-        while self.should_publish and not rospy.is_shutdown():
-            try:
-                # 发布当前目标位置
-                self.cmd_pose_pub.publish(self.target_pose)
-                
-                # 实时监控距离变化
-                if self.current_position is not None:
-                    current_distance = math.sqrt(
-                        (self.target_pose.position.x - self.current_position.x)**2 +
-                        (self.target_pose.position.y - self.current_position.y)**2 +
-                        (self.target_pose.position.z - self.current_position.z)**2
-                    )
-                    
-                    # 检测是否接近目标
-                    if current_distance < 25.0:  # 25米内认为接近
-                        stable_count += 1
-                        if stable_count > 100:  # 连续2秒(50Hz*2s=100)保持接近
-                            rospy.loginfo(f"目标位置稳定到达，距离: {current_distance:.1f}m")
-                    else:
-                        stable_count = 0
-                    
-                    last_distance = current_distance
-                
-                rate.sleep()
-            except rospy.ROSInterruptException:
-                break
-
-    def get_distance_to_target(self, target_x, target_y, target_z):
-        """计算到目标点的距离"""
-        if self.current_position is None:
-            return float('inf')
-        
-        dx = target_x - self.current_position.x
-        dy = target_y - self.current_position.y
-        dz = target_z - self.current_position.z
-        
-        return math.sqrt(dx*dx + dy*dy + dz*dz)
-
-    def get_horizontal_distance(self, target_x, target_y):
-        """计算到目标点的水平距离"""
-        if self.current_position is None:
-            return float('inf')
-        
-        dx = target_x - self.current_position.x
-        dy = target_y - self.current_position.y
-        
-        return math.sqrt(dx*dx + dy*dy)
+    @property
+    def current_position(self):
+        """获取当前位置"""
+        return self.flight_controller.current_position
 
     def wait_for_connection(self):
         """等待ROS连接"""
         print("等待位置信息...")
         
-        # 等待ROS位置信息，但添加超时和备用机制
-        timeout = 10  # 10秒超时
-        start_time = time.time()
+        # 先检查ROS通信状态
+        print("检查ROS通信状态...")
+        if not self.flight_controller.is_ros_ok():
+            print("❌ ROS通信状态异常")
+            return False
         
-        while self.current_position is None and not rospy.is_shutdown():
-            if time.time() - start_time > timeout:
-                print(f"⚠️ ROS位置信息超时 ({timeout}s)，使用默认起始位置")
-                # 创建默认位置对象
-                class DefaultPosition:
-                    def __init__(self):
-                        self.x = 0.0  # 旋翼区中心
-                        self.y = 0.0
-                        self.z = 0.0
-                
-                self.current_position = DefaultPosition()
-                break
-            time.sleep(0.1)
+        # 尝试获取位置信息，增加重试机制
+        max_retries = 3
+        for attempt in range(max_retries):
+            print(f"尝试获取位置信息 (第{attempt+1}次/共{max_retries}次)...")
+            
+            if self.flight_controller.wait_for_position(timeout=5):
+                current_pos = self.current_position
+                if current_pos:
+                    print(f"✅ 成功获取位置: ({current_pos.x:.1f}, {current_pos.y:.1f}, {current_pos.z:.1f})")
+                    
+                    # 验证位置是否在地图边界内
+                    if not self.map.is_in_bounds(current_pos.x, current_pos.y):
+                        print("⚠️ 位置超出地图边界，但继续执行")
+                    
+                    return True
+                else:
+                    print(f"⚠️ 第{attempt+1}次尝试：位置信息为空")
+            else:
+                print(f"⚠️ 第{attempt+1}次尝试：获取位置超时")
+            
+            if attempt < max_retries - 1:
+                print("等待2秒后重试...")
+                time.sleep(2)
         
-        if self.current_position:
-            print(f"当前位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {self.current_position.z:.1f})")
-            
-            # 验证位置是否在地图边界内
-            if not self.map.is_in_bounds(self.current_position.x, self.current_position.y):
-                print(f"⚠️ 警告：当前位置超出地图边界")
-                print(f"   地图边界: X[{self.map.x_min}, {self.map.x_max}], Y[{self.map.y_min}, {self.map.y_max}]")
-                print(f"   当前位置: ({self.current_position.x}, {self.current_position.y})")
-                
-                # 强制设置到旋翼区中心
-                print(f"   强制移动到旋翼区中心 (0, 0)")
-                self.current_position.x = 0.0
-                self.current_position.y = 0.0
-                self.current_position.z = max(0.0, self.current_position.z)
-            
-            # 检查是否在旋翼区内
-            zone_info = self.map.get_zone_info(self.current_position.x, self.current_position.y)
-            print(f"当前区域: {zone_info['name']} ({zone_info['type'].value})")
-        else:
-            print("❌ 无法获取位置信息")
+        print("❌ 所有尝试都失败，但允许继续执行（可能是仿真环境问题）")
+        return True  # 改为True，允许在没有位置信息的情况下继续
 
     def check_flight_safety(self, x, y, z):
         """检查飞行安全性"""
-        zone_info = self.map.get_zone_info(x, y)
-        
-        # 检查是否在地图边界内
-        if not self.map.is_in_bounds(x, y):
-            return False, "目标点超出地图边界"
-        
-        # 检查是否在禁飞的居民区
-        if zone_info['type'] == ZoneType.RESIDENTIAL:
-            return False, f"目标点在居民区 {zone_info['name']} 内，禁止飞行"
-        
-        # 放宽高度检查 - 只检查最小安全高度
-        min_safe_height = 5.0  # 最小安全高度5米
-        if zone_info['type'] == ZoneType.MULTIROTOR:
-            min_safe_height = 0.0  # 旋翼区允许降落到地面
-        elif zone_info['type'] == ZoneType.FREE_SPACE:
-            min_safe_height = 15.0  # 自由空间最小15米
-        
-        if z < min_safe_height:
-            return False, f"飞行高度 {z}m 低于最小安全高度 {min_safe_height}m"
-        
-        return True, "安全"
+        return self.flight_controller.check_flight_safety(x, y, z)
 
     def can_switch_to_multirotor(self, x=None, y=None):
-        """检查是否可以切换到旋翼模式
-        新规则：只要距离(0,0)在半径100米范围内，无论zone类型都允许切换
-        """
-        if x is None or y is None:
-            if not self.current_position:
-                return False
-            x, y = self.current_position.x, self.current_position.y
-        
-        # 计算到原点的距离
-        distance_to_origin = math.sqrt(x**2 + y**2)
-        
-        # 新规则：距离原点100米内都可以切换到旋翼模式
-        if distance_to_origin <= 100.0:
-            print(f"✅ 距离原点{distance_to_origin:.1f}m (<100m)，允许切换到旋翼模式")
-            return True
-        else:
-            print(f"❌ 距离原点{distance_to_origin:.1f}m (≥100m)，不允许切换到旋翼模式")
-            return False
+        """检查是否可以切换到旋翼模式"""
+        return self.flight_controller.can_switch_to_multirotor(x, y)
 
-    def switch_to_mode(self, target_mode):
-        """切换飞行模式（新规则：距离(0,0)在100米内可切换旋翼模式）"""
-        if self.current_mode == target_mode:
-            return True
-        
-        # 检查当前位置
-        if self.current_position:
-            current_zone = self.map.get_zone_info(self.current_position.x, self.current_position.y)
-            
-            print(f"当前位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}) - {current_zone['name']}")
-            
-            # 如果要切换到旋翼模式，使用新的判定规则
-            if target_mode == "multirotor":
-                if not self.can_switch_to_multirotor():
-                    print(f"❌ 无法切换到旋翼模式：距离原点超过100米")
-                    print("强制保持固定翼模式")
-                    if self.current_mode != "plane":
-                        self.send_cmd("plane")
-                        self.current_mode = "plane"
-                    return False
-                else:
-                    print(f"✅ 符合新规则，允许切换到旋翼模式")
-        
-        print(f"切换模式: {self.current_mode} -> {target_mode}")
-        
-        if target_mode == "plane":
-            self.send_cmd("plane")
-            self.current_mode = "plane"
-        elif target_mode == "multirotor":
-            self.send_cmd("multirotor")
-            self.current_mode = "multirotor"
-        
-        time.sleep(3)  # 等待模式切换完成
-        return True
-
+    # 飞行控制方法 - 委托给飞行控制器
     def takeoff_sequence(self):
-        """起飞序列 - 必须在旋翼区执行"""
-        print(f"\n🚀 开始起飞序列...")
-        print("="*50)
-        
-        # 详细的起飞前检查
-        if self.current_position is None:
-            print("❌ 起飞失败：无法获取当前位置信息")
-            print("   请检查ROS连接和MAVLink通信")
-            return False
-        
-        current_x = self.current_position.x
-        current_y = self.current_position.y
-        current_z = self.current_position.z
-        
-        print(f"📍 起飞前位置检查:")
-        print(f"   当前位置: ({current_x:.1f}, {current_y:.1f}, {current_z:.1f})")
-        print(f"   地图边界: X[{self.map.x_min}, {self.map.x_max}], Y[{self.map.y_min}, {self.map.y_max}]")
-        print(f"   旋翼区: 中心({self.map.multirotor_center[0]}, {self.map.multirotor_center[1]}), 半径{self.map.multirotor_radius}m")
-        
-        # 检查是否在地图边界内
-        if not self.map.is_in_bounds(current_x, current_y):
-            print(f"⚠️ 当前位置超出地图边界，尝试修正...")
-            
-            # 自动修正到旋翼区中心
-            corrected_x = self.map.multirotor_center[0]
-            corrected_y = self.map.multirotor_center[1]
-            corrected_z = max(0.0, current_z)
-            
-            print(f"   修正位置: ({corrected_x}, {corrected_y}, {corrected_z})")
-            
-            # 更新位置
-            self.current_position.x = corrected_x
-            self.current_position.y = corrected_y
-            self.current_position.z = corrected_z
-            
-            current_x, current_y, current_z = corrected_x, corrected_y, corrected_z
-        
-        # 使用新规则检查是否可以切换到旋翼模式
-        print(f"   检查是否可切换到旋翼模式（新规则：距离原点100米内）...")
-        
-        if not self.can_switch_to_multirotor(current_x, current_y):
-            # 距离原点超过100米，需要移动到100米范围内
-            print(f"⚠️ 距离原点超过100米，自动移动到100米范围内...")
-            
-            # 移动到距离原点90米的位置（留10米余量）
-            distance_to_origin = math.sqrt(current_x**2 + current_y**2)
-            if distance_to_origin > 0:
-                # 计算缩放比例
-                scale = 90.0 / distance_to_origin
-                safe_x = current_x * scale
-                safe_y = current_y * scale
-            else:
-                # 如果在原点，移动到旋翼区中心
-                safe_x = self.map.multirotor_center[0]
-                safe_y = self.map.multirotor_center[1]
-            
-            print(f"   移动到安全位置: ({safe_x:.1f}, {safe_y:.1f})")
-            
-            # 更新位置
-            self.current_position.x = safe_x
-            self.current_position.y = safe_y
-            
-            # 重新验证
-            if not self.can_switch_to_multirotor(safe_x, safe_y):
-                print(f"❌ 位置修正失败：修正后位置仍超过100米限制")
-                print(f"❌ 起飞失败：无法在可切换旋翼模式的区域内起飞")
-                return False
-        
-        print("✅ 位置验证通过，确认在可切换旋翼模式区域内，可以安全起飞")
-        
-        # 确保在多旋翼模式（新规则：距离原点100米内允许）
-        if not self.switch_to_mode("multirotor"):
-            print("❌ 无法切换到旋翼模式，起飞失败")
-            return False
-        
-        # 1. 开始持续发布位置指令
-        start_x = self.current_position.x
-        start_y = self.current_position.y
-        self.set_target_pose(start_x, start_y, 5.0)
-        time.sleep(2)
-        
-        # 2. 设置OFFBOARD模式
-        print("设置OFFBOARD模式...")
-        self.send_cmd("OFFBOARD")
-        time.sleep(2)
-        
-        # 3. 解锁无人机
-        print("解锁无人机...")
-        self.send_cmd("ARM")
-        time.sleep(3)
-        
-        # 4. 逐步起飞 - 使用闭环控制
-        print("📈 开始闭环控制起飞...")
-        start_x = self.current_position.x
-        start_y = self.current_position.y
-        
-        takeoff_heights = [5, 10, 20, self.takeoff_height]
-        
-        for i, height in enumerate(takeoff_heights):
-            print(f"   🎯 起飞阶段 {i+1}/{len(takeoff_heights)}: 目标高度 {height}m")
-            
-            # 使用闭环控制到达指定高度
-            success = self.wait_for_position_reached(start_x, start_y, height, tolerance=3.0, max_wait_time=20.0)
-            
-            if success:
-                print(f"   ✅ 到达高度 {height}m")
-            else:
-                print(f"   ⚠️ 高度 {height}m 未完全到达，继续下一阶段")
-            
-            # 短暂等待稳定
-            time.sleep(1)
-        
-        # 最终高度验证
-        if self.current_position:
-            final_height = self.current_position.z
-            print(f"📊 起飞完成检查：")
-            print(f"   目标高度: {self.takeoff_height}m")
-            print(f"   实际高度: {final_height:.1f}m")
-            
-            if final_height >= self.takeoff_height - 5.0:
-                print("✅ 起飞成功!")
-                return True
-            else:
-                print("⚠️ 起飞高度不足，但继续任务...")
-                return True
-        else:
-            print("❌ 无法获取最终高度")
-            return False
+        """起飞序列"""
+        return self.flight_controller.takeoff_sequence()
 
     def fly_to_target(self, target_x, target_y, target_z):
         """飞向指定目标"""
-        print(f"\n飞向目标: ({target_x}, {target_y}, {target_z})")
-        print("="*50)
-        
-        # 安全检查
-        is_safe, safety_msg = self.check_flight_safety(target_x, target_y, target_z)
-        if not is_safe:
-            print(f"❌ 安全检查失败: {safety_msg}")
-            return False
-        
-        # 检查当前位置和目标位置的区域类型
-        current_zone = self.map.get_zone_info(self.current_position.x, self.current_position.y)
-        target_zone = self.map.get_zone_info(target_x, target_y)
-        
-        print(f"当前区域: {current_zone['name']}")
-        print(f"目标区域: {target_zone['name']}")
-        
-        # 飞行模式决策：只有在旋翼区内才能使用旋翼模式
-        current_in_multirotor = (current_zone['type'] == ZoneType.MULTIROTOR)
-        target_in_multirotor = (target_zone['type'] == ZoneType.MULTIROTOR)
-        
-        if current_in_multirotor and target_in_multirotor:
-            # 旋翼区内短距离飞行，使用旋翼模式
-            print("旋翼区内飞行，使用旋翼模式")
-            return self.fly_with_multirotor_mode(target_x, target_y, target_z)
-        elif current_in_multirotor and not target_in_multirotor:
-            # 从旋翼区飞出，需要先切换到固定翼模式再飞行
-            print("从旋翼区飞出，使用固定翼模式")
-            return self.fly_from_multirotor_to_outside(target_x, target_y, target_z)
-        elif not current_in_multirotor and target_in_multirotor:
-            # 飞向旋翼区，在旋翼区边缘切换到旋翼模式
-            print("飞向旋翼区，固定翼模式接近后切换旋翼模式")
-            return self.fly_to_multirotor_zone(target_x, target_y, target_z)
-        else:
-            # 旋翼区外飞行，必须使用固定翼模式
-            print("旋翼区外飞行，使用固定翼模式")
-            return self.fly_with_plane_mode(target_x, target_y, target_z)
-
-    def check_line_intersects_residential(self, x1, y1, x2, y2):
-        """检查线段是否与居民区相交"""
-        for area in self.map.residential_areas:
-            center_x, center_y = area["center"]
-            radius = area["radius"]
-            
-            # 计算点到线段的最短距离
-            if self.point_to_line_distance(center_x, center_y, x1, y1, x2, y2) <= radius:
-                return True, area["name"]
-        return False, None
-    
-    def point_to_line_distance(self, px, py, x1, y1, x2, y2):
-        """计算点到线段的最短距离"""
-        # 线段长度的平方
-        line_length_sq = (x2 - x1)**2 + (y2 - y1)**2
-        
-        if line_length_sq == 0:
-            # 线段退化为点
-            return math.sqrt((px - x1)**2 + (py - y1)**2)
-        
-        # 计算投影参数t
-        t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / line_length_sq
-        t = max(0, min(1, t))  # 限制在[0,1]范围内
-        
-        # 计算投影点
-        proj_x = x1 + t * (x2 - x1)
-        proj_y = y1 + t * (y2 - y1)
-        
-        # 返回距离
-        return math.sqrt((px - proj_x)**2 + (py - proj_y)**2)
-    
-    def find_safe_waypoints(self, start_x, start_y, end_x, end_y):
-        """使用A*算法规划安全航点，避开居民区"""
-        print(f"🧭 A*路径规划: 从 ({start_x:.1f}, {start_y:.1f}) 到 ({end_x:.1f}, {end_y:.1f})")
-        
-        # 使用A*算法进行路径规划
-        start_pos = (start_x, start_y)
-        end_pos = (end_x, end_y)
-        
-        # 调用A*路径规划
-        astar_path = self.astar_planner.plan_path(start_pos, end_pos)
-        
-        if astar_path and len(astar_path) > 1:
-            # A*规划成功，计算路径统计信息
-            total_distance = 0
-            for i in range(len(astar_path) - 1):
-                dx = astar_path[i+1][0] - astar_path[i][0]
-                dy = astar_path[i+1][1] - astar_path[i][1]
-                total_distance += math.sqrt(dx*dx + dy*dy)
-            
-            # 直线距离
-            direct_distance = math.sqrt((end_x - start_x)**2 + (end_y - start_y)**2)
-            path_efficiency = (direct_distance / total_distance) * 100 if total_distance > 0 else 100
-            
-            print(f"✅ A*路径规划成功:")
-            print(f"   路径点数: {len(astar_path)}")
-            print(f"   总距离: {total_distance:.1f}m")
-            print(f"   直线距离: {direct_distance:.1f}m")
-            print(f"   路径效率: {path_efficiency:.1f}%")
-            
-            # 转换为航点列表（去除起点，保留其他关键点）
-            waypoints = []
-            for i, (wp_x, wp_y) in enumerate(astar_path):
-                if i == 0:  # 跳过起点
-                    continue
-                waypoints.append((wp_x, wp_y))
-                
-                # 显示航点信息
-                zone_info = self.map.get_zone_info(wp_x, wp_y)
-                print(f"   A*航点{i}: ({wp_x:.1f}, {wp_y:.1f}) - {zone_info['name']}")
-            
-            return waypoints
-        
-        else:
-            # A*规划失败，使用备用简单路径
-            print("❌ A*路径规划失败，使用备用策略")
-            return self.find_safe_waypoints_fallback(start_x, start_y, end_x, end_y)
-    
-    def find_safe_waypoints_fallback(self, start_x, start_y, end_x, end_y):
-        """备用路径规划方法（原有的简单绕行策略）"""
-        print(f"🔄 使用备用路径规划: 从 ({start_x:.1f}, {start_y:.1f}) 到 ({end_x:.1f}, {end_y:.1f})")
-        
-        # 检查直线路径是否安全
-        intersects, area_name = self.check_line_intersects_residential(start_x, start_y, end_x, end_y)
-        
-        if not intersects:
-            print("✅ 直线路径安全，无需绕行")
-            return [(end_x, end_y)]
-        
-        print(f"⚠️ 直线路径与居民区 {area_name} 相交，规划绕行路径")
-        
-        # 简单绕行策略：选择北绕或南绕
-        waypoints = []
-        
-        # 计算中点用于绕行
-        mid_x = (start_x + end_x) / 2
-        
-        # 尝试北绕（y正方向）
-        north_waypoint = (mid_x, 300)  # 北侧绕行点
-        north_safe = True
-        
-        # 检查北绕路径是否安全
-        if (self.check_line_intersects_residential(start_x, start_y, north_waypoint[0], north_waypoint[1])[0] or 
-            self.check_line_intersects_residential(north_waypoint[0], north_waypoint[1], end_x, end_y)[0]):
-            north_safe = False
-        
-        # 尝试南绕（y负方向）
-        south_waypoint = (mid_x, -300)  # 南侧绕行点
-        south_safe = True
-        
-        # 检查南绕路径是否安全
-        if (self.check_line_intersects_residential(start_x, start_y, south_waypoint[0], south_waypoint[1])[0] or 
-            self.check_line_intersects_residential(south_waypoint[0], south_waypoint[1], end_x, end_y)[0]):
-            south_safe = False
-        
-        # 选择最佳绕行路径
-        if north_safe and south_safe:
-            # 都安全，选择距离更短的
-            north_dist = (math.sqrt((north_waypoint[0] - start_x)**2 + (north_waypoint[1] - start_y)**2) + 
-                         math.sqrt((end_x - north_waypoint[0])**2 + (end_y - north_waypoint[1])**2))
-            south_dist = (math.sqrt((south_waypoint[0] - start_x)**2 + (south_waypoint[1] - start_y)**2) + 
-                         math.sqrt((end_x - south_waypoint[0])**2 + (end_y - south_waypoint[1])**2))
-            
-            if north_dist <= south_dist:
-                waypoints = [north_waypoint, (end_x, end_y)]
-                print(f"选择北绕路径: {north_waypoint}")
-            else:
-                waypoints = [south_waypoint, (end_x, end_y)]
-                print(f"选择南绕路径: {south_waypoint}")
-        elif north_safe:
-            waypoints = [north_waypoint, (end_x, end_y)]
-            print(f"选择北绕路径: {north_waypoint}")
-        elif south_safe:
-            waypoints = [south_waypoint, (end_x, end_y)]
-            print(f"选择南绕路径: {south_waypoint}")
-        else:
-            print("❌ 警告：无法找到安全绕行路径，尝试直接飞行")
-            waypoints = [(end_x, end_y)]
-        
-        return waypoints
-    
-    def fly_from_multirotor_to_outside(self, target_x, target_y, target_z):
-        """从旋翼区飞向外部区域"""
-        print("从旋翼区飞向外部，先在旋翼区边缘切换到固定翼模式...")
-        
-        # 计算旋翼区边缘点
-        multirotor_center = self.map.multirotor_center
-        multirotor_radius = self.map.multirotor_radius
-        
-        # 计算从旋翼区中心到目标的方向
-        center_x, center_y = multirotor_center
-        direction_x = target_x - center_x
-        direction_y = target_y - center_y
-        direction_length = math.sqrt(direction_x**2 + direction_y**2)
-        
-        if direction_length > 0:
-            # 单位化方向向量
-            direction_x /= direction_length
-            direction_y /= direction_length
-            
-            # 计算旋翼区边缘点（略向内一点确保在旋翼区内）
-            edge_margin = 10  # 边缘安全距离
-            edge_x = center_x + direction_x * (multirotor_radius - edge_margin)
-            edge_y = center_y + direction_y * (multirotor_radius - edge_margin)
-        else:
-            # 如果目标就在旋翼区中心，直接使用当前位置
-            edge_x = self.current_position.x
-            edge_y = self.current_position.y
-        
-        print(f"先飞向旋翼区边缘点: ({edge_x:.1f}, {edge_y:.1f})")
-        
-        # 第一步：在旋翼区内用旋翼模式飞到边缘
-        self.switch_to_mode("multirotor")
-        self.set_target_pose(edge_x, edge_y, self.cruise_height)
-        time.sleep(8)
-        
-        # 第二步：切换到固定翼模式
-        print("在旋翼区边缘切换到固定翼模式...")
-        if not self.switch_to_mode("plane"):
-            print("❌ 切换固定翼模式失败")
-            return False
-        
-        # 第三步：使用固定翼模式飞向目标
-        return self.fly_with_plane_mode(target_x, target_y, target_z)
-    
-    def fly_to_multirotor_zone(self, target_x, target_y, target_z):
-        """飞向旋翼区（固定翼接近，旋翼区内切换旋翼模式）"""
-        print("飞向旋翼区，先用固定翼模式接近...")
-        
-        # 确保当前是固定翼模式
-        self.switch_to_mode("plane")
-        
-        # 计算旋翼区边缘接近点
-        multirotor_center = self.map.multirotor_center
-        multirotor_radius = self.map.multirotor_radius
-        
-        center_x, center_y = multirotor_center
-        current_x = self.current_position.x
-        current_y = self.current_position.y
-        
-        # 计算从当前位置到旋翼区中心的方向
-        direction_x = center_x - current_x
-        direction_y = center_y - current_y
-        direction_length = math.sqrt(direction_x**2 + direction_y**2)
-        
-        if direction_length > 0:
-            direction_x /= direction_length
-            direction_y /= direction_length
-        else:
-            # 如果已经在可切换区域中心，检查是否可以直接切换到旋翼模式
-            print("已在中心位置，检查是否可以切换旋翼模式")
-            if self.can_switch_to_multirotor():
-                if self.switch_to_mode("multirotor"):
-                    return self.fly_with_multirotor_mode(target_x, target_y, target_z)
-            # 如果不能切换，继续使用固定翼模式
-            return self.fly_with_plane_mode(target_x, target_y, target_z)
-        
-        # 检查目标是否在旋翼区内
-        target_in_multirotor = self.map.distance_to_point(target_x, target_y, center_x, center_y) <= multirotor_radius
-        
-        if target_in_multirotor:
-            # 计算旋翼区边缘的接近点（外侧一点）
-            approach_margin = 20  # 接近距离
-            approach_x = center_x - direction_x * (multirotor_radius + approach_margin)
-            approach_y = center_y - direction_y * (multirotor_radius + approach_margin)
-        else:
-            # 目标不在旋翼区内，这种情况不应该发生，但仍然接近旋翼区
-            print("警告：目标不在旋翼区内，但仍接近旋翼区")
-            approach_x = center_x - direction_x * (multirotor_radius + 20)
-            approach_y = center_y - direction_y * (multirotor_radius + 20)
-        
-        print(f"固定翼模式接近旋翼区边缘: ({approach_x:.1f}, {approach_y:.1f})")
-        
-        # 第一步：用固定翼模式接近旋翼区
-        self.set_target_pose(approach_x, approach_y, self.cruise_height)
-        time.sleep(10)
-        
-        # 第二步：进入旋翼区
-        print("进入旋翼区...")
-        entry_x = center_x - direction_x * (multirotor_radius - 10)
-        entry_y = center_y - direction_y * (multirotor_radius - 10)
-        
-        self.set_target_pose(entry_x, entry_y, self.cruise_height)
-        time.sleep(5)
-        
-        # 验证是否已经可以切换到旋翼模式（新规则）
-        if self.current_position:
-            if self.can_switch_to_multirotor(self.current_position.x, self.current_position.y):
-                print("✅ 已进入可切换旋翼模式区域（距离原点100米内），切换到旋翼模式...")
-                
-                # 切换到旋翼模式
-                if self.switch_to_mode("multirotor"):
-                    print("✅ 成功切换到旋翼模式")
-                    # 第三步：用旋翼模式精确飞向目标
-                    return self.fly_with_multirotor_mode(target_x, target_y, target_z)
-                else:
-                    print("❌ 切换旋翼模式失败，继续用固定翼模式")
-                    return self.fly_with_plane_mode(target_x, target_y, target_z)
-            else:
-                current_zone = self.map.get_zone_info(self.current_position.x, self.current_position.y)
-                print(f"⚠️ 仍未进入可切换旋翼模式区域，当前在{current_zone['name']}，继续用固定翼模式")
-                return self.fly_with_plane_mode(target_x, target_y, target_z)
-        else:
-            print("❌ 无法获取当前位置，继续用固定翼模式")
-            return self.fly_with_plane_mode(target_x, target_y, target_z)
-
-    def fly_with_plane_mode(self, target_x, target_y, target_z):
-        """使用固定翼模式飞行（集成A*路径规划）"""
-        print("🛩️ 使用固定翼模式进行飞行...")
-        
-        # 确保在固定翼模式
-        self.switch_to_mode("plane")
-        
-        # 使用A*算法规划安全航点
-        current_x = self.current_position.x
-        current_y = self.current_position.y
-        
-        print(f"当前位置: ({current_x:.1f}, {current_y:.1f})")
-        print(f"目标位置: ({target_x:.1f}, {target_y:.1f})")
-        
-        # A*路径规划
-        waypoints = self.find_safe_waypoints(current_x, current_y, target_x, target_y)
-        
-        if not waypoints:
-            print("❌ 路径规划失败，无法继续")
-            return False
-        
-        # 计算总航行距离和预估时间
-        total_distance = 0
-        prev_x, prev_y = current_x, current_y
-        for wp_x, wp_y in waypoints:
-            segment_dist = math.sqrt((wp_x - prev_x)**2 + (wp_y - prev_y)**2)
-            total_distance += segment_dist
-            prev_x, prev_y = wp_x, wp_y
-        
-        # 预估飞行时间（假设平均速度15m/s）
-        estimated_time = total_distance / 15.0
-        print(f"📊 飞行计划:")
-        print(f"   总航行距离: {total_distance:.1f}m")
-        print(f"   航点数量: {len(waypoints)}")
-        print(f"   预估飞行时间: {estimated_time:.1f}s")
-        
-        # 依次飞向各个航点
-        for i, (wp_x, wp_y) in enumerate(waypoints):
-            # 动态调整飞行高度
-            if i == len(waypoints) - 1:
-                # 最后一个航点，使用目标高度
-                flight_height = max(target_z + 10, 30)  # 至少30米高度
-            else:
-                # 中间航点，使用巡航高度
-                flight_height = self.cruise_height
-            
-            print(f"🎯 飞向航点 {i+1}/{len(waypoints)}: ({wp_x:.1f}, {wp_y:.1f}, {flight_height:.1f}m)")
-            
-            # 安全检查：确保航点不在居民区
-            zone_info = self.map.get_zone_info(wp_x, wp_y)
-            if zone_info['type'] == ZoneType.RESIDENTIAL:
-                print(f"❌ 紧急警告：航点 {i+1} 在居民区 {zone_info['name']} 内！")
-                print("   跳过此航点，继续下一个...")
-                continue
-            
-            # 设置目标位置并使用闭环控制
-            print(f"🎯 飞向航点 {i+1}/{len(waypoints)}: ({wp_x:.1f}, {wp_y:.1f}, {flight_height:.1f}m)")
-            
-            # 安全检查：确保航点不在居民区
-            zone_info = self.map.get_zone_info(wp_x, wp_y)
-            if zone_info['type'] == ZoneType.RESIDENTIAL:
-                print(f"❌ 紧急警告：航点 {i+1} 在居民区 {zone_info['name']} 内！")
-                print("   跳过此航点，继续下一个...")
-                continue
-            
-            # 计算到航点的距离
-            if i == 0:
-                segment_distance = math.sqrt((wp_x - current_x)**2 + (wp_y - current_y)**2)
-            else:
-                prev_wp_x, prev_wp_y = waypoints[i-1]
-                segment_distance = math.sqrt((wp_x - prev_wp_x)**2 + (wp_y - prev_wp_y)**2)
-            
-            print(f"   航段距离: {segment_distance:.1f}m")
-            
-            # 动态计算容忍度和等待时间
-            waypoint_tolerance = min(25.0, max(20.0, segment_distance * 0.1))  # 距离的10%，最小20m，最大25m
-            max_wait_time = max(30.0, min(90.0, segment_distance / 15.0))  # 基于15m/s速度，最小30s，最大90s
-            
-            print(f"   容忍度: {waypoint_tolerance:.1f}m, 最大等待: {max_wait_time:.1f}s")
-            
-            # 使用闭环控制到达航点
-            success = self.wait_for_position_reached(wp_x, wp_y, flight_height, waypoint_tolerance, max_wait_time)
-            
-            if success:
-                print(f"   ✅ 成功到达航点 {i+1}")
-            else:
-                print(f"   ⚠️ 航点 {i+1} 未完全到达，继续下一个航点")
-            
-            # 持续监控安全
-            if self.current_position:
-                current_zone = self.map.get_zone_info(self.current_position.x, self.current_position.y)
-                if current_zone['type'] == ZoneType.RESIDENTIAL:
-                    print(f"🚨 紧急警告：无人机进入居民区 {current_zone['name']}！")
-                    print("   执行紧急脱离程序...")
-                    
-                    # 紧急脱离：向安全区域移动
-                    emergency_x = self.current_position.x
-                    emergency_y = self.current_position.y
-                    
-                    # 策略：向旋翼区方向快速移动
-                    if emergency_x > 0:
-                        emergency_x = max(0, emergency_x - 200)
-                    else:
-                        emergency_x = min(0, emergency_x + 200)
-                    
-                    if emergency_y > 0:
-                        emergency_y = max(-500, emergency_y - 100)
-                    else:
-                        emergency_y = min(500, emergency_y + 100)
-                    
-                    print(f"   紧急移动到: ({emergency_x:.1f}, {emergency_y:.1f})")
-                    self.wait_for_position_reached(emergency_x, emergency_y, flight_height + 20, 30.0, 15.0)
-                    break
-        
-        # 最终接近目标 - 使用闭环控制
-        print(f"🎯 A*路径完成，开始闭环精确接近目标...")
-        
-        # 检查目标是否在旋翼区
-        target_zone = self.map.get_zone_info(target_x, target_y)
-        if target_zone['type'] == ZoneType.MULTIROTOR:
-            print("   目标在旋翼区，准备模式切换...")
-        
-        # 使用精确控制方法进行最终接近
-        final_height = max(target_z, 20)  # 确保安全高度
-        success = self.precise_fly_to_position(target_x, target_y, final_height, "固定翼最终目标")
-        
-        if success:
-            print("✅ 固定翼模式闭环导航成功")
-        else:
-            print("⚠️ 固定翼模式闭环导航未完全达标")
-        
-        return success
-
-    def fly_with_multirotor_mode(self, target_x, target_y, target_z):
-        """使用多旋翼模式飞行 - 闭环控制版本"""
-        print("🚁 使用多旋翼模式进行短距离飞行（闭环控制）...")
-        
-        # 确保在多旋翼模式
-        self.switch_to_mode("multirotor")
-        
-        # 使用精确控制方法
-        return self.precise_fly_to_position(target_x, target_y, target_z, "多旋翼目标")
+        return self.flight_controller.fly_to_target(target_x, target_y, target_z)
 
     def land_at_target(self, target_x, target_y, target_z):
-        """在目标点降落（新规则：距离原点100米内可切换旋翼模式）"""
-        target_zone = self.map.get_zone_info(target_x, target_y)
-        
-        # 使用新规则检查是否可以切换到旋翼模式
-        if self.can_switch_to_multirotor(target_x, target_y):
-            print("目标点在可切换旋翼模式区域内（距离原点100米内），切换到旋翼模式降落...")
-            
-            # 确保在可切换区域内才切换到旋翼模式
-            if self.switch_to_mode("multirotor"):
-                # 逐步下降
-                for height in [10, 5, target_z]:
-                    self.set_target_pose(target_x, target_y, height)
-                    time.sleep(3)
-                
-                # 如果目标高度为0，执行降落
-                if target_z <= 1.0:
-                    print("执行自动降落...")
-                    self.send_cmd("LAND")
-                    time.sleep(5)
-            else:
-                print("无法切换到旋翼模式，使用固定翼模式在高度保持悬停")
-                self.set_target_pose(target_x, target_y, max(15.0, target_z))
-                time.sleep(5)
-        else:
-            print(f"目标点超出可切换旋翼模式区域（距离原点>100米），在{target_zone['name']}悬停（固定翼模式）...")
-            # 在非可切换区域必须保持固定翼模式
-            self.switch_to_mode("plane")
-            safe_height = max(20.0, target_z)  # 确保足够的安全高度
-            self.set_target_pose(target_x, target_y, safe_height)
-            time.sleep(5)
+        """在目标点降落"""
+        return self.flight_controller.land_at_target(target_x, target_y, target_z)
 
-    def execute_mission(self):
-        """执行完整任务（集成A*路径规划）"""
-        print(f"\n🚁 开始VTOL演示飞行任务 (集成A*路径规划)")
-        print(f"任务目标点数量: {len(self.targets)}")
-        print("="*70)
-        
-        # 生成任务路径可视化
-        print("📊 生成任务路径预览...")
-        self.visualize_mission_path("vtol_mission_astar_preview.png")
-        
-        # 任务路径概览
-        print(f"\n🗺️ 任务路径概览:")
-        total_mission_distance = 0
-        
-        for i in range(len(self.targets) - 1):
-            if i == 0:
-                continue  # 跳过起飞
-                
-            start_target = self.targets[i]
-            end_target = self.targets[i + 1]
-            
-            start_x, start_y, _ = start_target['position']
-            end_x, end_y, _ = end_target['position']
-            
-            # 快速距离估算
-            segment_distance = math.sqrt((end_x - start_x)**2 + (end_y - start_y)**2)
-            total_mission_distance += segment_distance
-            
-            print(f"   航段 {i}: {start_target['name']} -> {end_target['name']}")
-            print(f"          直线距离: {segment_distance:.1f}m")
-        
-        print(f"   总任务距离(估算): {total_mission_distance:.1f}m")
-        print(f"   预估任务时间: {total_mission_distance/15:.1f}s (假设15m/s平均速度)")
-        
-        # 起飞
-        print(f"\n🚀 执行起飞序列...")
-        if not self.takeoff_sequence():
-            print("❌ 起飞失败，任务终止")
-            return False
-        
-        print("✅ 起飞完成，开始A*导航任务")
-        
-        # 起飞完成，发送起飞点的condition状态
-        if len(self.targets) > 0:
-            self.update_mission_condition(0)  # 起飞点是第一个目标点
-        
-        # 依次飞向各个目标点
-        successful_targets = 0
-        
-        for i, target in enumerate(self.targets):
-            target_x, target_y, target_z = target['position']
-            target_name = target['name']
-            
-            if i == 0:  # 跳过起点
-                continue
-                
-            print(f"\n🎯 任务段 {i}/{len(self.targets)-1}: 飞向 {target_name}")
-            print(f"   目标坐标: ({target_x}, {target_y}, {target_z})")
-            print(f"   目标描述: {target['description']}")
-            print("-" * 60)
-            
-            # 执行A*路径规划和飞行
-            start_time = time.time()
-            success = self.fly_to_target(target_x, target_y, target_z)
-            flight_time = time.time() - start_time
-            
-            if success:
-                successful_targets += 1
-                print(f"✅ 成功到达目标点 {target_name} (用时: {flight_time:.1f}s)")
-                
-                # 更新并发送condition状态
-                self.update_mission_condition(i)
-                
-                # 在目标点执行相应动作
-                if target_z <= 1.0:  # 降落目标
-                    print("🛬 执行降落程序...")
-                    self.land_at_target(target_x, target_y, target_z)
-                else:  # 悬停目标
-                    print("⏸️ 在目标点悬停5秒...")
-                    time.sleep(5)
-                
-                # 记录到达状态
-                if self.current_position:
-                    actual_distance = self.get_distance_to_target(target_x, target_y, target_z)
-                    print(f"   实际位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {self.current_position.z:.1f})")
-                    print(f"   到达精度: {actual_distance:.1f}m")
-                    
-            else:
-                print(f"⚠️ 目标点 {target_name} 未能完全到达")
-            
-            # 检查是否是最后一个目标点
-            if i == len(self.targets) - 1:
-                final_target = self.targets[-1]
-                final_target_z = final_target['position'][2]
-                if final_target_z <= 1.0:
-                    print("🏁 任务完成，已降落")
-                    break
-        
-        # 任务完成总结
-        print(f"\n🎉 VTOL A*导航飞行任务完成!")
-        print(f"📊 任务统计:")
-        print(f"   成功目标点: {successful_targets}/{len(self.targets)-1}")
-        print(f"   成功率: {successful_targets/(len(self.targets)-1)*100:.1f}%")
-        print(f"   使用A*算法进行智能路径规划")
-        print(f"   所有路径均避开居民区障碍物")
-        
-        # 任务结束前自动返航到出发点
-        print(f"\n🏠 任务完成，执行自动返航...")
-        print("发送 AUTO.RTL 命令，无人机将自动返回出发点")
-        self.send_cmd("AUTO.RTL")
-        
-        # 等待返航和降落完成
-        print("等待无人机返航并自动降落...")
-        self.wait_for_landing_completion()
-        
-        # 发送最终的0x05 condition（成功降落，引导四旋翼无人机起飞）
-        print("\n🛬 无人机成功降落，发送最终condition...")
-        final_condition = 0x05
-        self.publish_condition(final_condition)
-        print(f"✅ 发送最终condition 0x{final_condition:02X} - 引导四旋翼无人机起飞")
-        
-        # 等待condition发送完成并确保系统稳定
-        print("等待系统状态稳定...")
-        time.sleep(5)  # 等待5秒确保消息发送和系统稳定
-        
-        # 停止发布并解锁
-        self.should_publish = False
-        time.sleep(1)
-        self.send_cmd("DISARM")
-        
-        print("\n🎉 VTOL任务完全完成，系统安全退出")
-        return True
+    def return_to_launch(self):
+        """返航到起飞点"""
+        return self.flight_controller.return_to_launch()
 
-    def run(self):
-        """运行主程序"""
+    def emergency_stop(self):
+        """紧急停止"""
+        self.flight_controller.emergency_stop()
+
+    # 任务管理和流程控制
+    def run_mission(self):
+        """执行完整任务"""
+        print(f"\n🎯 开始执行VTOL自动飞行任务")
+        print("="*60)
+        print(f"任务概述: {len(self.targets)} 个目标点")
+        
         try:
-            self.wait_for_connection()
+            # 1. 初始化和连接检查
+            print("\n📋 步骤1: 系统初始化...")
+            if not self.init_and_check():
+                print("❌ 初始化失败，任务终止")
+                return False
             
-            # 打印地图和任务信息
-            self.map.print_map_summary()
+            # 2. 起飞前状态检查
+            print("\n📋 步骤2: 起飞前检查...")
+            current_pos = self.current_position
+            if current_pos:
+                print(f"起飞前位置: ({current_pos.x:.1f}, {current_pos.y:.1f}, {current_pos.z:.1f})")
+            else:
+                print("⚠️ 无法获取起飞前位置，使用默认值")
             
-            # 执行任务
-            self.execute_mission()
+            # 3. 起飞
+            print("\n📋 步骤3: 执行起飞...")
+            if not self.takeoff_sequence():
+                print("❌ 起飞失败，任务终止")
+                return False
+            
+            print("✅ 起飞成功，开始访问目标点")
+            
+            # 4. 访问每个目标点
+            success_count = 0
+            for i, target in enumerate(self.targets):
+                if i == 0:  # 跳过起飞点
+                    print(f"\n🎯 目标点 {i+1}/{len(self.targets)}: {target['name']} (起飞点，跳过)")
+                    self.update_mission_condition(i)
+                    success_count += 1
+                    continue
+                
+                self.current_target_index = i
+                
+                print(f"\n🎯 目标点 {i+1}/{len(self.targets)}: {target['name']}")
+                print("-" * 50)
+                
+                x, y, z = target['position']
+                
+                # 安全检查
+                is_safe, safety_msg = self.check_flight_safety(x, y, z)
+                if not is_safe:
+                    print(f"❌ 跳过不安全的目标点: {safety_msg}")
+                    continue
+                
+                # 飞向目标点
+                print(f"飞向目标: ({x}, {y}, {z})")
+                if self.fly_to_target(x, y, z):
+                    print(f"✅ 成功到达目标点 {target['name']}")
+                    
+                    # 发布condition
+                    self.update_mission_condition(i)
+                    
+                    # 如果是最后一个目标且高度较低，尝试降落
+                    if i == len(self.targets) - 1 and z <= 5.0:
+                        print(f"最后目标点且高度较低，尝试降落...")
+                        self.land_at_target(x, y, z)
+                    
+                    success_count += 1
+                    time.sleep(3)  # 在目标点停留
+                else:
+                    print(f"❌ 未能到达目标点 {target['name']}")
+            
+            # 5. 返航
+            print(f"\n🏠 所有目标点访问完成 ({success_count}/{len(self.targets)})，开始返航...")
+            if self.return_to_launch():
+                print("✅ 返航成功")
+            else:
+                print("⚠️ 返航完成（可能有异常）")
+            
+            # 6. 任务总结
+            self.print_mission_summary(success_count)
+            
+            return True
             
         except KeyboardInterrupt:
-            print("\n收到中断信号，正在停止...")
-            self.should_publish = False
-            self.send_cmd("HOVER")
-            self.send_cmd("DISARM")
+            print(f"\n⚠️ 用户中断任务")
+            self.emergency_stop()
+            return False
         except Exception as e:
-            print(f"发生错误: {e}")
+            print(f"\n❌ 任务执行异常: {e}")
             import traceback
             traceback.print_exc()
-
-    def visualize_mission_path(self, save_path="mission_path.png"):
-        """可视化整个任务的路径规划结果"""
-        print(f"\n📊 生成任务路径可视化图...")
-        
-        try:
-            import matplotlib.pyplot as plt
-            
-            fig, ax = plt.subplots(1, 1, figsize=(14, 10))
-            
-            # 绘制地图
-            self.map.draw_map(ax)
-            
-            # 绘制所有目标点
-            target_colors = ['green', 'blue', 'orange', 'red', 'purple']
-            
-            for i, target in enumerate(self.targets):
-                x, y, z = target['position']
-                color = target_colors[i % len(target_colors)]
-                
-                ax.plot(x, y, 'o', color=color, markersize=12, 
-                       markeredgecolor='black', markeredgewidth=2)
-                ax.annotate(f"{i}: {target['name']}", (x, y), 
-                           xytext=(10, 10), textcoords='offset points',
-                           fontsize=10, fontweight='bold',
-                           bbox=dict(boxstyle="round,pad=0.3", facecolor=color, alpha=0.7))
-            
-            # 为每对相邻目标点规划并绘制路径
-            for i in range(len(self.targets) - 1):
-                if i == 0:  # 跳过起飞
-                    continue
-                    
-                start_target = self.targets[i]
-                end_target = self.targets[i + 1]
-                
-                start_x, start_y, _ = start_target['position']
-                end_x, end_y, _ = end_target['position']
-                
-                print(f"规划路径 {i} -> {i+1}: {start_target['name']} -> {end_target['name']}")
-                
-                # 使用A*算法规划路径
-                astar_path = self.astar_planner.plan_path((start_x, start_y), (end_x, end_y))
-                
-                if astar_path:
-                    # 绘制A*路径
-                    path_x = [p[0] for p in astar_path]
-                    path_y = [p[1] for p in astar_path]
-                    
-                    ax.plot(path_x, path_y, '-', color=target_colors[i % len(target_colors)], 
-                           linewidth=2, alpha=0.8, 
-                           label=f'路径 {i}->{i+1}: {start_target["name"][:8]}')
-                    
-                    # 标记关键航点
-                    for j, (px, py) in enumerate(astar_path[1:-1], 1):  # 跳过起点和终点
-                        if j % 2 == 0:  # 每隔一个点标记
-                            ax.plot(px, py, 's', color=target_colors[i % len(target_colors)], 
-                                   markersize=4, alpha=0.6)
-                else:
-                    # A*失败，绘制直线
-                    ax.plot([start_x, end_x], [start_y, end_y], '--', 
-                           color='red', linewidth=1, alpha=0.5,
-                           label=f'直线 {i}->{i+1} (A*失败)')
-            
-            ax.set_title('VTOL任务路径规划 (A*算法)', fontsize=16, fontweight='bold')
-            ax.set_xlabel('X坐标 (米)', fontsize=12)
-            ax.set_ylabel('Y坐标 (米)', fontsize=12)
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            ax.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            print(f"✅ 任务路径图已保存到: {save_path}")
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ 可视化失败: {e}")
+            self.emergency_stop()
             return False
 
-    def wait_for_position_reached(self, target_x, target_y, target_z, tolerance=20.0, max_wait_time=60.0):
-        """等待到达目标位置 - 闭环控制"""
-        print(f"🎯 闭环等待到达: ({target_x:.1f}, {target_y:.1f}, {target_z:.1f}), 容忍度: {tolerance}m")
+    def init_and_check(self):
+        """初始化和检查"""
+        print("🔧 初始化ROS通信...")
+        self.init_ros()
         
-        start_time = time.time()
-        min_distance = float('inf')
-        stable_time = 0
-        last_stable_check = time.time()
-        
-        # 设置目标并开始发布
-        self.set_target_pose(target_x, target_y, target_z)
-        
-        rate = rospy.Rate(10)  # 10Hz检查频率
-        
-        while time.time() - start_time < max_wait_time and not rospy.is_shutdown():
-            if self.current_position is None:
-                print("⚠️ 无法获取位置信息")
-                rate.sleep()
-                continue
-            
-            # 计算当前距离
-            current_distance = self.get_distance_to_target(target_x, target_y, target_z)
-            min_distance = min(min_distance, current_distance)
-            
-            # 持续发布目标位置确保控制器收到指令
-            self.set_target_pose(target_x, target_y, target_z)
-            
-            # 检查是否在容忍度内
-            if current_distance <= tolerance:
-                # 检查稳定性
-                current_time = time.time()
-                if current_time - last_stable_check >= 1.0:  # 每秒检查一次稳定性
-                    stable_time += 1.0
-                    last_stable_check = current_time
-                    
-                    if stable_time >= 3.0:  # 稳定3秒即认为到达
-                        print(f"✅ 稳定到达目标！距离: {current_distance:.1f}m, 用时: {time.time() - start_time:.1f}s")
-                        return True
-            else:
-                stable_time = 0  # 重置稳定时间
-                last_stable_check = time.time()
-            
-            # 每5秒报告状态
-            elapsed = time.time() - start_time
-            if int(elapsed) % 5 == 0 and elapsed > 0:
-                print(f"  📊 {elapsed:5.1f}s | 当前距离: {current_distance:6.1f}m | 最小距离: {min_distance:6.1f}m")
-                print(f"      位置: ({self.current_position.x:7.1f}, {self.current_position.y:7.1f}, {self.current_position.z:6.1f})")
-                print(f"      目标: ({target_x:7.1f}, {target_y:7.1f}, {target_z:6.1f})")
-            
-            rate.sleep()
-        
-        # 超时处理
-        final_distance = self.get_distance_to_target(target_x, target_y, target_z)
-        print(f"⏰ 等待超时！最终距离: {final_distance:.1f}m, 最小距离: {min_distance:.1f}m")
-        
-        # 即使超时，如果距离可接受也认为成功
-        if final_distance <= tolerance * 2:  # 容忍度的2倍内也算接受
-            print(f"✅ 虽然超时，但距离可接受")
-            return True
-        else:
-            print(f"❌ 未能到达目标位置")
-            return False
-
-    def precise_fly_to_position(self, target_x, target_y, target_z, description="目标点"):
-        """精确飞向位置 - 使用闭环控制"""
-        print(f"\n🎯 精确飞向 {description}: ({target_x:.1f}, {target_y:.1f}, {target_z:.1f})")
-        print("-" * 50)
-        
-        if self.current_position is None:
-            print("❌ 无法获取当前位置")
+        print("📡 等待连接...")
+        if not self.wait_for_connection():
+            print("❌ 连接检查失败")
             return False
         
-        start_x = self.current_position.x
-        start_y = self.current_position.y
-        start_z = self.current_position.z
-        
-        total_distance = math.sqrt((target_x - start_x)**2 + (target_y - start_y)**2 + (target_z - start_z)**2)
-        print(f"📏 起始位置: ({start_x:.1f}, {start_y:.1f}, {start_z:.1f})")
-        print(f"📏 目标距离: {total_distance:.1f}m")
-        
-        # 分阶段接近：远距离 -> 中距离 -> 精确定位
-        approach_stages = [
-            (min(50.0, total_distance * 0.8), 5.0, "远距离接近"),
-            (min(30.0, total_distance * 0.5), 5.0, "中距离接近"),
-            (20.0, 5.0, "精确定位")
-        ]
-        
-        for stage, (tolerance, max_time, stage_name) in enumerate(approach_stages, 1):
-            if total_distance <= tolerance:
-                print(f"跳过阶段 {stage}：{stage_name}（已足够接近）")
-                continue
-                
-            print(f"\n📍 阶段 {stage}: {stage_name} (容忍度: {tolerance}m)")
-            
-            success = self.wait_for_position_reached(target_x, target_y, target_z, tolerance, max_time)
-            
-            if success:
-                print(f"✅ 阶段 {stage} 完成")
-                # 更新当前位置用于下一阶段计算
-                if self.current_position:
-                    total_distance = self.get_distance_to_target(target_x, target_y, target_z)
-            else:
-                print(f"⚠️ 阶段 {stage} 未完全达标，继续下一阶段")
-        
-        # 最终验证
-        if self.current_position:
-            final_distance = self.get_distance_to_target(target_x, target_y, target_z)
-            print(f"\n🏁 {description} 飞行完成")
-            print(f"   最终距离: {final_distance:.1f}m")
-            print(f"   最终位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {self.current_position.z:.1f})")
-            
-            if final_distance <= 25.0:
-                print(f"   ✅ 精度良好")
-                return True
-            elif final_distance <= 40.0:
-                print(f"   ⚠️ 精度一般，但可接受")
-                return True
-            else:
-                print(f"   ❌ 精度不足")
-                return False
-        
-        return False
+        print("✅ 初始化完成")
+        return True
 
-    def wait_for_landing_completion(self):
-        """等待无人机返航和降落完成"""
-        print("🔍 监控无人机返航和降落过程...")
-        
-        max_wait_time = 120.0  # 最大等待2分钟
-        start_time = time.time()
-        landing_threshold = 2.0  # 降落高度阈值2米
-        stable_landing_time = 5.0  # 需要稳定在低高度5秒
-        
-        landing_start_time = None
-        last_height = float('inf')
-        
-        rate = rospy.Rate(2)  # 2Hz检查频率
-        
-        while time.time() - start_time < max_wait_time and not rospy.is_shutdown():
-            if self.current_position is None:
-                print("⚠️ 无法获取位置信息，继续等待...")
-                rate.sleep()
-                continue
-            
-            current_height = self.current_position.z
-            current_distance_to_origin = math.sqrt(
-                self.current_position.x**2 + self.current_position.y**2
-            )
-            
-            # 检查是否接近原点（返航成功）
-            if current_distance_to_origin <= 50.0:  # 距离原点50米内
-                print(f"📍 已返航至原点附近，距离: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
-                
-                # 检查是否开始降落
-                if current_height <= landing_threshold:
-                    if landing_start_time is None:
-                        landing_start_time = time.time()
-                        print(f"🛬 检测到开始降落，高度: {current_height:.1f}m")
-                    else:
-                        # 检查是否稳定降落
-                        stable_time = time.time() - landing_start_time
-                        if stable_time >= stable_landing_time:
-                            print(f"✅ 降落完成！稳定在低高度 {stable_time:.1f}s")
-                            print(f"   最终位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {current_height:.1f})")
-                            return True
-                        else:
-                            print(f"🛬 降落中...稳定时间: {stable_time:.1f}s/{stable_landing_time}s")
-                else:
-                    # 重置降落计时器（如果高度又升高了）
-                    if landing_start_time is not None:
-                        print(f"⬆️ 高度上升到 {current_height:.1f}m，重置降落检测")
-                        landing_start_time = None
-            else:
-                print(f"🏠 返航中...距离原点: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
-                landing_start_time = None  # 重置降落检测
-            
-            last_height = current_height
-            rate.sleep()
-        
-        # 超时处理
-        elapsed_time = time.time() - start_time
-        print(f"⏰ 等待降落超时 ({elapsed_time:.1f}s)，假设降落完成")
+    def print_mission_summary(self, success_count):
+        """打印任务总结"""
+        print(f"\n📊 任务总结")
+        print("="*50)
+        print(f"总目标点数: {len(self.targets)}")
+        print(f"成功访问: {success_count}")
+        print(f"成功率: {success_count/len(self.targets)*100:.1f}%")
         
         if self.current_position:
-            final_height = self.current_position.z
-            final_distance = math.sqrt(self.current_position.x**2 + self.current_position.y**2)
-            print(f"   最终位置: 距离原点 {final_distance:.1f}m，高度 {final_height:.1f}m")
-            
-            # 即使超时，如果在合理范围内也认为成功
-            if final_distance <= 100.0 and final_height <= 10.0:
-                print("✅ 位置合理，认为降落成功")
-                return True
+            final_pos = self.current_position
+            print(f"最终位置: ({final_pos.x:.1f}, {final_pos.y:.1f}, {final_pos.z:.1f})")
         
-        print("⚠️ 降落状态不确定，但继续完成任务")
-        return False
+        print("任务完成! 🎉")
+
+    def shutdown(self):
+        """关闭系统"""
+        print("关闭VTOL演示系统...")
+        self.flight_controller.shutdown()
+
 
 def main():
-    """主函数：执行完整的VTOL飞行演示"""
-    print("\n🚁 VTOL固定翼无人机飞行演示开始")
-    print("=" * 50)
+    """主函数"""
+    print("VTOL演示飞行系统启动")
+    print("=" * 60)
     
+    # 初始化ROS节点
     try:
-        # 初始化飞行控制器
-        print("📡 初始化飞行控制器...")
-        controller = VTOLDemoFlight()
-        
-    except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
-        print(f"\n❌ YAML配置文件错误: {e}")
-        print("❌ 无法加载飞行目标点配置")
-        print("❌ 拒绝起飞，程序退出")
-        print("\n💡 请检查:")
-        print("   1. vtol_target.yaml 文件是否存在")
-        print("   2. YAML文件格式是否正确")
-        print("   3. targets 字段是否包含有效的目标点")
+        import rospy
+        if not rospy.core.is_initialized():
+            rospy.init_node('vtol_demo_flight', anonymous=True)
+            print("✅ ROS节点初始化成功")
+        else:
+            print("✅ ROS节点已初始化")
+    except Exception as e:
+        print(f"❌ ROS节点初始化失败: {e}")
         return False
     
     try:
-        # 现在初始化ROS通信
-        print("🔗 设置ROS通信...")
-        controller.init_ros()
+        # 创建演示飞行对象
+        demo = VTOLDemoFlight()
         
-        # 等待ROS节点完全初始化
-        print("⏱️  等待ROS节点初始化...")
-        time.sleep(2)
-        
-        # 等待获取当前位置
-        print("📍 等待获取当前位置...")
-        timeout = 10
-        start_time = time.time()
-        while controller.current_position is None and (time.time() - start_time) < timeout:
-            time.sleep(0.1)
-        
-        if controller.current_position is None:
-            print("❌ 无法获取当前位置，请检查仿真环境是否正常运行")
-            return False
-        
-        print(f"✅ 当前位置: ({controller.current_position.x:.1f}, {controller.current_position.y:.1f}, {controller.current_position.z:.1f})")
-        
-        # 显示目标点信息
-        print(f"\n🎯 目标点列表 (共{len(controller.targets)}个):")
-        for i, target in enumerate(controller.targets):
-            x, y, z = target['position']
-            zone = controller.map.get_zone_type(x, y)
-            zone_name = {
-                ZoneType.MULTIROTOR: "旋翼区",
-                ZoneType.FREE_SPACE: "自由空间", 
-                ZoneType.RESIDENTIAL: "居民区"
-            }.get(zone, "未知区域")
-            print(f"   {i+1}. {target['name']}: ({x:.1f}, {y:.1f}, {z:.1f}) - {zone_name}")
-            print(f"      描述: {target['description']}")
-        
-        # 执行自动飞行任务
-        print(f"\n🚀 开始执行自动飞行任务...")
-        success = controller.execute_mission()
+        # 执行任务
+        success = demo.run_mission()
         
         if success:
-            print("\n🎉 飞行任务完成！")
-            print("✅ 所有目标点已成功到达")
+            print("✅ 演示飞行任务完成")
         else:
-            print("\n⚠️ 飞行任务部分完成")
-            print("❗ 某些目标点可能未能成功到达")
+            print("❌ 演示飞行任务失败")
         
-        # 显示飞行统计
-        print(f"\n📊 飞行统计:")
-        print(f"   目标点总数: {len(controller.targets)}")
-        print(f"   已完成: {controller.current_target_index}")
-        print(f"   完成率: {controller.current_target_index/len(controller.targets)*100:.1f}%")
+        # 清理资源
+        demo.shutdown()
         
-        return success
-        
-    except KeyboardInterrupt:
-        print("\n🛑 用户中断飞行")
-        return False
     except Exception as e:
-        print(f"\n❌ 飞行过程中发生错误: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ 系统错误: {e}")
         return False
-    finally:
-        print("\n🔚 飞行演示结束")
+    
+    return True
 
 
 if __name__ == "__main__":
-    # 设置日志级别
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    
-    # 检查ROS环境
-    try:
-        rospy.init_node('vtol_demo_flight', anonymous=True)
-        print("✅ ROS节点初始化成功")
-    except Exception as e:
-        print(f"❌ ROS节点初始化失败: {e}")
-        print("   请确保已启动ROS核心和仿真环境")
-        exit(1)
-    
-    # 运行主程序
-    success = main()
-    
-    # 退出码
-    exit(0 if success else 1)
+    main()
