@@ -667,13 +667,13 @@ class PoseNode:
 
     def first_pose_callback(self, msg):
         """处理人的位置的信息"""
-        position = msg.pose.position
+        position = msg.position
         self.first_target_pose = (position.x, position.y)  # 假设高度为20米
         print(f"接收到第一人的位置信息: x={position.x}, y={position.y}, z={position.z}")
 
     def third_pose_callback(self, msg):
         """处理第三人的位置的信息"""
-        position = msg.pose.position
+        position = msg.position
         self.third_target_pose = (position.x, position.y)  # 假设高度为20米
         print(f"接收到第三人的位置信息: x={position.x}, y={position.y}, z={position.z}")
 
@@ -757,7 +757,7 @@ def main():
     while not node.done:
         rospy.sleep(0.1)
 
-    original_poses = [(2, 3),node.third_target_pose[-1], node.first_target_pose[-1] , (0, 1)]
+    original_poses = [(2, 3),node.third_target_pose, node.first_target_pose , (0, 1)]
     path_planner = VTOLAstarPlanner()
 
     multirotor_control.controller.current_iris_status.data = 1
@@ -775,13 +775,13 @@ def main():
             return
 
     multirotor_control.controller.current_iris_status.data = 3
-    success = multirotor_control.go_to_position(self.third_target_pose, stop=False)
+    success = multirotor_control.go_to_position(node.third_target_pose, stop=True)
     if not success:
         print("移动到第三人位置失败")
         return
     
     multirotor_control.controller.current_iris_status.data = 4
-    success = self.visual_landing(target_type="landing_target_camo")
+    success = multirotor_control.visual_landing(target_type="landing_target_camo")
     if not success:
         print("视觉降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
@@ -790,7 +790,7 @@ def main():
 
     multirotor_control.controller.current_iris_status.data = 5
     multirotor_control.takeoff(altitude=20)
-    success = multirotor_control.go_to_position(self.first_target_pose, stop=False)
+    success = multirotor_control.go_to_position(node.first_target_pose, stop=True)
     if not success:
         print("移动到第一人位置失败")
         return
