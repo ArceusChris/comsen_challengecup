@@ -695,11 +695,11 @@ main() {
     configure_px4_params
     start_virtual_rc
     start_tf_publisher
-    start_iris_control
-    start_vtol_control
     start_vtol_yolo_detection
     start_iris_yolo_detection
     start_landing_detection
+    start_iris_control
+    start_vtol_control
     
     # 检查服务状态
     sleep 10

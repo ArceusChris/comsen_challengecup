@@ -19,7 +19,7 @@ class RedPatternDetector:
         self.image_sub = rospy.Subscriber('/iris_0/camera/image_raw', Image, self.image_callback)
         
         # 订阅YOLO11红色目标检测结果作为备用
-        self.yolo_sub = rospy.Subscriber('/yolo11/position/red', Point, self.yolo_callback)
+        self.yolo_sub = rospy.Subscriber('/yolo11/pixel_position/red', Point, self.yolo_callback)
         
         # 发布降落点坐标
         self.target_pub = rospy.Publisher('/landing_target_red', PointStamped, queue_size=1)

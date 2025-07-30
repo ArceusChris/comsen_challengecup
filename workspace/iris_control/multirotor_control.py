@@ -118,8 +118,8 @@ class MultirotorControl:
         self.MAX_LINEAR = MAX_LINEAR
         
         # 视觉降落相关参数
-        self.image_width = 640
-        self.image_height = 480
+        self.image_width = 512
+        self.image_height = 288
         self.camera_center_x = self.image_width / 2
         self.camera_center_y = self.image_height / 2
         
@@ -516,8 +516,8 @@ class MultirotorControl:
         norm_error_y = error_y / (self.image_height / 2)
         
         # 使用PID控制器计算速度
-        vel_x = -self.pid_x.update(norm_error_x, current_time)
-        vel_y = self.pid_y.update(norm_error_y, current_time)
+        vel_x = -self.pid_y.update(norm_error_y, current_time)
+        vel_y = -self.pid_x.update(norm_error_x, current_time)
         
         return vel_x, vel_y
     
@@ -571,7 +571,10 @@ class MultirotorControl:
                 print("检测到目标，切换到跟踪状态")
                 
         elif self.current_landing_state == self.LANDING_STATES['TRACKING']:
-            print(f"跟踪目标中，误差距离: {error_distance:.1f}px")
+            if error_distance is not None:
+                print(f"跟踪目标中，误差距离: {error_distance:.1f}px")
+            else:
+                print("跟踪目标中，等待目标检测...")
             
             if target_timeout:
                 self.current_landing_state = self.LANDING_STATES['SEARCHING']
@@ -597,7 +600,10 @@ class MultirotorControl:
                     print("目标居中，开始下降")
                     
         elif self.current_landing_state == self.LANDING_STATES['DESCENDING']:
-            print(f"下降中，高度: {current_altitude:.2f}m，目标误差: {error_distance:.1f}px")
+            if error_distance is not None:
+                print(f"下降中，高度: {current_altitude:.2f}m，目标误差: {error_distance:.1f}px")
+            else:
+                print(f"下降中，高度: {current_altitude:.2f}m，等待目标检测...")
             
             if target_timeout:
                 self.current_landing_state = self.LANDING_STATES['SEARCHING']
@@ -785,7 +791,6 @@ def main():
     if not success:
         print("视觉降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
-        return
     print("视觉降落成功，准备移动到第一人位置")
 
     multirotor_control.controller.current_iris_status.data = 5
@@ -800,7 +805,6 @@ def main():
     if not success:
         print("视觉降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
-        return
     print("视觉降落成功，准备返回起点")
 
     multirotor_control.controller.current_iris_status.data = 7 

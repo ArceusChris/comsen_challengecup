@@ -124,6 +124,13 @@ class YOLO11InferenceNode:
             self.pose_estimation_pubs[target_name] = rospy.Publisher(topic_name, Point, queue_size=1)
             rospy.loginfo(f"位姿估计发布话题: {topic_name}")
         
+        # 创建像素坐标发布者（用于发布实时像素坐标）
+        self.pixel_position_pubs = {}
+        for target_name in self.target_points.keys():
+            topic_name = f"/yolo11/pixel_position/{target_name}"
+            self.pixel_position_pubs[target_name] = rospy.Publisher(topic_name, Point, queue_size=1)
+            rospy.loginfo(f"像素坐标发布话题: {topic_name}")
+        
         # 创建VTOL目标位姿发布者（仅在VTOL机型时）
         self.vtol_target_pose_pubs = {}
         if self.aircraft_type == 'standard_vtol':
@@ -368,7 +375,7 @@ class YOLO11InferenceNode:
                 rospy.loginfo(f"VTOL着陆标志更新: {old_flag} -> {self.vtol_land_flag}")
                 if self.vtol_land_flag == 2:
                     rospy.loginfo("VTOL着陆完成，开始发布点云数据")
-                elif self.vtol_land_flag == 4 and old_flag == 3:
+                elif self.vtol_land_flag == 3:
                     rospy.loginfo("VTOL标志从3变为4，计算并发布点云平均位置和目标位姿")
                     self.calculate_and_publish_average_positions()
                     # 发布目标位姿到VTOL话题
@@ -534,6 +541,9 @@ class YOLO11InferenceNode:
             center_y = (y1 + y2) / 2
             
             rospy.logdebug(f"处理目标 {class_name}，像素坐标: ({center_x:.1f}, {center_y:.1f})")
+            
+            # 发布像素坐标位置
+            self.publish_pixel_position(class_name, center_x, center_y)
             
             # 转换为世界坐标
             world_pos = self.pixel_to_world_coordinate(center_x, center_y, pose, camera_info)
@@ -840,6 +850,23 @@ class YOLO11InferenceNode:
                 rospy.logerr(f"发布 {target_name} 实时位置失败: {e}")
         else:
             rospy.logwarn(f"{target_name} 没有对应的实时位置发布者")
+    
+    def publish_pixel_position(self, target_name, pixel_x, pixel_y):
+        """发布目标的像素坐标位置"""
+        rospy.loginfo(f"发布 {target_name} 像素坐标: [{pixel_x:.1f}, {pixel_y:.1f}]")
+        
+        if target_name in self.pixel_position_pubs:
+            try:
+                pixel_msg = Point()
+                pixel_msg.x = pixel_x
+                pixel_msg.y = pixel_y
+                pixel_msg.z = 0.0  # 像素坐标的z值设为0
+                self.pixel_position_pubs[target_name].publish(pixel_msg)
+                rospy.loginfo(f"已发布 {target_name} 像素坐标")
+            except Exception as e:
+                rospy.logerr(f"发布 {target_name} 像素坐标失败: {e}")
+        else:
+            rospy.logwarn(f"{target_name} 没有对应的像素坐标发布者")
     
     def should_publish_pointcloud(self):
         """判断是否应该发布点云数据"""
