@@ -7,14 +7,18 @@ services:
     environment:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROC_ENABLE_PRE_VEGA=1
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${PWD}/workspace:/root/workspace
       - ${PWD}/models:/root/.gazebo/models
     devices:
       - /dev/dri:/dev/dri
+      - /dev/kfd:/dev/kfd
+    group_add:
+      - video
+      - render
     network_mode: host
     privileged: true
     stdin_open: true

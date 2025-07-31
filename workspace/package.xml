@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>workspace</name>
+  <version>1.0.0</version>
+  <description>ROS workspace for drone autonomous search and rescue mission</description>
+
+  <maintainer email="user@example.com">User</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <export>
+    <metapackage/>
+  </export>
+</package>
