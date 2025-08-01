@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 多旋翼无人机控制节点，支持动态PID参数调整 -->
+    
+    <!-- 无人机类型和ID参数 -->
+    <arg name="multirotor_type" default="iris"/>
+    <arg name="multirotor_id" default="0"/>
+    <arg name="control_type" default="vel"/>
+    
+    <!-- 加载PID参数配置文件 -->
+    <rosparam file="$(find iris_control)/config/multirotor_pid_params.yaml" ns="multirotor_control_node"/>
+    
+    <!-- 启动多旋翼控制节点 -->
+    <node name="multirotor_control_node" 
+          pkg="iris_control" 
+          type="multirotor_control.py" 
+          output="screen"
+          respawn="false">
+        
+        <!-- 传递无人机参数 -->
+        <param name="multirotor_type" value="$(arg multirotor_type)"/>
+        <param name="multirotor_id" value="$(arg multirotor_id)"/>
+        <param name="control_type" value="$(arg control_type)"/>
+        
+        <!-- 可以在这里覆盖特定的PID参数 -->
+        <!-- 
+        <param name="pid_x/kp" value="2.5"/>
+        <param name="pid_y/kp" value="2.5"/>
+        <param name="max_vel_xy" value="2.0"/>
+        -->
+    </node>
+    
+    <!-- 可选：启动PID调优工具 -->
+    <!-- 取消注释下面的行来自动启动PID调优界面 -->
+    <!--
+    <node name="pid_tuner" 
+          pkg="iris_control" 
+          type="pid_tuner.py" 
+          output="screen"
+          launch-prefix="gnome-terminal -e">
+        <param name="target_node" value="multirotor_control_node"/>
+    </node>
+    -->
+    
+</launch>

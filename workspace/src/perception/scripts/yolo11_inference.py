@@ -196,7 +196,7 @@ class YOLO11InferenceNode:
         """图像回调函数"""
         try:
             # 添加调试信息
-            rospy.logdebug_throttle(2.0, f"接收到图像，时间戳: {msg.header.stamp}")
+            # rospy.logdebug_throttle(2.0, f"接收到图像，时间戳: {msg.header.stamp}")
             
             # 将ROS图像消息转换为OpenCV格式
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -204,7 +204,8 @@ class YOLO11InferenceNode:
             # 运行YOLO11推理
             results = self.model(cv_image, 
                                conf=self.confidence_threshold, 
-                               iou=self.iou_threshold)
+                               iou=self.iou_threshold,
+                               verbose=False)
             result = results[0]
             
             # 获取当前位姿和相机内参
@@ -212,13 +213,13 @@ class YOLO11InferenceNode:
                 current_pose = self.current_pose
                 current_camera_info = self.camera_info
             
-            # 检查必要的数据是否可用
-            if current_pose is None:
-                rospy.logwarn_throttle(5.0, "位姿数据不可用，跳过坐标转换")
-            elif current_camera_info is None:
-                rospy.logwarn_throttle(5.0, "相机内参不可用，跳过坐标转换")
-            else:
-                rospy.logdebug_throttle(10.0, "位姿和相机内参数据可用，处理检测结果")
+            # # 检查必要的数据是否可用
+            # if current_pose is None:
+            #     rospy.logwarn_throttle(5.0, "位姿数据不可用，跳过坐标转换")
+            # elif current_camera_info is None:
+            #     rospy.logwarn_throttle(5.0, "相机内参不可用，跳过坐标转换")
+            # else:
+            #     rospy.logdebug_throttle(10.0, "位姿和相机内参数据可用，处理检测结果")
             
             # 处理检测结果并更新点集
             self.process_detections_and_update_points(result, current_pose, current_camera_info)
@@ -230,9 +231,9 @@ class YOLO11InferenceNode:
             output_msg = self.bridge.cv2_to_imgmsg(annotated_image, "bgr8")
             output_msg.header = msg.header  # 保持时间戳信息
             self.image_pub.publish(output_msg)
-            
-            rospy.logdebug_throttle(5.0, "图像处理完成，已发布结果")
-            
+
+            # rospy.logdebug_throttle(5.0, "图像处理完成，已发布结果")
+
         except Exception as e:
             rospy.logerr(f"图像处理失败: {str(e)}")
             import traceback
@@ -375,13 +376,18 @@ class YOLO11InferenceNode:
                 rospy.loginfo(f"VTOL着陆标志更新: {old_flag} -> {self.vtol_land_flag}")
                 if self.vtol_land_flag == 2:
                     rospy.loginfo("VTOL着陆完成，开始发布点云数据")
-                elif self.vtol_land_flag == 3:
+                elif self.vtol_land_flag == 4:
                     rospy.loginfo("VTOL标志从3变为4，计算并发布点云平均位置和目标位姿")
                     self.calculate_and_publish_average_positions()
                     # 发布目标位姿到VTOL话题
                     self.publish_vtol_target_poses()
                 else:
                     rospy.loginfo("VTOL着陆未完成，仅发布实时位置数据")
+
+            if self.vtol_land_flag == 3:
+                self.calculate_and_publish_average_positions()
+                # 发布目标位姿到VTOL话题
+                self.publish_vtol_target_poses()
     
     def pixel_to_world_coordinate(self, pixel_x, pixel_y, pose, camera_info):
         """将像素坐标转换为世界坐标（假设物体在地面上，Z=0）"""
@@ -540,7 +546,7 @@ class YOLO11InferenceNode:
             center_x = (x1 + x2) / 2
             center_y = (y1 + y2) / 2
             
-            rospy.logdebug(f"处理目标 {class_name}，像素坐标: ({center_x:.1f}, {center_y:.1f})")
+            # rospy.logdebug(f"处理目标 {class_name}，像素坐标: ({center_x:.1f}, {center_y:.1f})")
             
             # 发布像素坐标位置
             self.publish_pixel_position(class_name, center_x, center_y)
@@ -548,8 +554,8 @@ class YOLO11InferenceNode:
             # 转换为世界坐标
             world_pos = self.pixel_to_world_coordinate(center_x, center_y, pose, camera_info)
             
-            if world_pos is not None and self.vtol_land_flag >= 2:
-                rospy.loginfo(f"开始处理 {class_name} 目标的检测结果...")
+            if world_pos is not None and self.vtol_land_flag >= 2 and self.vtol_land_flag <= 3:
+                # rospy.loginfo(f"开始处理 {class_name} 目标的检测结果...")
                 
                 # 添加到对应的点集中
                 with self.data_lock:
@@ -559,20 +565,18 @@ class YOLO11InferenceNode:
                         'pixel_coords': [center_x, center_y]
                     })
                 
-                rospy.loginfo(f"已添加 {class_name} 到点集，开始发布实时位置...")
+                # rospy.loginfo(f"已添加 {class_name} 到点集，开始发布实时位置...")
                 
                 # 发布实时位置
                 self.publish_realtime_position(class_name, world_pos)
-                
-                rospy.loginfo(f"检测到{class_name}，世界坐标: [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]")
-                rospy.loginfo(f"当前{class_name}点集大小: {len(self.target_points[class_name])}")
+
+                # rospy.loginfo(f"检测到{class_name}，世界坐标: [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]")
+                # rospy.loginfo(f"当前{class_name}点集大小: {len(self.target_points[class_name])}")
             else:
                 rospy.logwarn(f"无法计算{class_name}目标的世界坐标")
         
-        # 处理完所有检测后，根据条件发布点云数据
-        rospy.loginfo("开始调用 conditional_publish_pointclouds()")
         self.conditional_publish_pointclouds()
-        rospy.loginfo("完成调用 conditional_publish_pointclouds()")
+
     
     def calculate_and_publish_average_positions(self):
         """计算三个目标的点云平均位置并发布"""
@@ -836,7 +840,7 @@ class YOLO11InferenceNode:
     
     def publish_realtime_position(self, target_name, world_pos):
         """发布目标的实时位置"""
-        rospy.loginfo(f"发布 {target_name} 实时位置: [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]")
+        # rospy.loginfo(f"发布 {target_name} 实时位置: [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]")
         
         if target_name in self.position_pubs:
             try:
@@ -845,7 +849,7 @@ class YOLO11InferenceNode:
                 position_msg.y = world_pos[1] 
                 position_msg.z = world_pos[2]
                 self.position_pubs[target_name].publish(position_msg)
-                rospy.loginfo(f"已发布 {target_name} 实时位置")
+                # rospy.loginfo(f"已发布 {target_name} 实时位置")
             except Exception as e:
                 rospy.logerr(f"发布 {target_name} 实时位置失败: {e}")
         else:
@@ -862,7 +866,7 @@ class YOLO11InferenceNode:
                 pixel_msg.y = pixel_y
                 pixel_msg.z = 0.0  # 像素坐标的z值设为0
                 self.pixel_position_pubs[target_name].publish(pixel_msg)
-                rospy.loginfo(f"已发布 {target_name} 像素坐标")
+                # rospy.loginfo(f"已发布 {target_name} 像素坐标")
             except Exception as e:
                 rospy.logerr(f"发布 {target_name} 像素坐标失败: {e}")
         else:
@@ -886,7 +890,6 @@ class YOLO11InferenceNode:
     
     def conditional_publish_pointclouds(self):
         """根据条件发布点云数据"""
-        rospy.loginfo("进入 conditional_publish_pointclouds 函数")
         
         if not self.publish_pointcloud:
             rospy.loginfo("点云发布被禁用，退出")
@@ -894,12 +897,9 @@ class YOLO11InferenceNode:
         
         # 检查是否应该发布点云
         should_publish = self.should_publish_pointcloud()
-        rospy.loginfo(f"should_publish_pointcloud 返回: {should_publish}")
         
         if should_publish:
-            rospy.loginfo("开始发布点云数据")
             self.publish_pointclouds()
-            rospy.loginfo("完成发布点云数据")
         else:
             with self.vtol_flag_lock:
                 vtol_flag = self.vtol_land_flag
@@ -915,33 +915,15 @@ class YOLO11InferenceNode:
             rospy.loginfo("点云发布被禁用，退出")
             return
         
-        rospy.loginfo("获取数据锁...")
         with self.data_lock:
-            rospy.loginfo("已获取数据锁，开始遍历目标点云")
             for target_name, points in self.target_points.items():
-                rospy.loginfo(f"处理目标 {target_name}，点数: {len(points)}")
-                
                 if points and target_name in self.pointcloud_pubs:
-                    rospy.loginfo(f"为 {target_name} 创建点云消息...")
                     pointcloud_msg = self.create_pointcloud2_message(points, target_name)
-                    
                     if pointcloud_msg is not None:
-                        rospy.loginfo(f"发布 {target_name} 点云消息...")
                         self.pointcloud_pubs[target_name].publish(pointcloud_msg)
-                        rospy.loginfo(f"已发布 {target_name} 点云消息")
-                    else:
-                        rospy.logwarn(f"{target_name} 点云消息创建失败")
-                else:
-                    if not points:
-                        rospy.logdebug(f"{target_name} 没有点数据")
-                    elif target_name not in self.pointcloud_pubs:
-                        rospy.logwarn(f"{target_name} 没有对应的发布者")
-        
-        rospy.loginfo("退出 publish_pointclouds 函数")
     
     def pointcloud_timer_callback(self, event):
         """定时发布点云数据"""
-        rospy.logdebug("定时器触发点云发布")
         try:
             self.conditional_publish_pointclouds()
         except Exception as e:

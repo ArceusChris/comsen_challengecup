@@ -5,6 +5,11 @@
 VTOL无人机演示飞行主控脚本（简化版）
 模块化重构后的主控脚本，负责任务管理和流程控制
 具体的飞行控制委托给 VTOLFlightController
+
+功能特性：
+- 使用定时器持续发布condition状态标识符 (2Hz频率)
+- 支持任务状态自动切换和实时状态监控
+- 包含异常处理和状态恢复机制
 '''
 
 import sys
@@ -38,7 +43,13 @@ class VTOLDemoFlight:
         
         # 当前状态
         self.current_target_index = 0
+        self.current_condition = 0xAA  # 初始状态
         
+        # 定时器相关
+        self.condition_timer = None
+        self.condition_timer_running = False  # 跟踪定时器状态
+        self.condition_publish_rate = 20.0  # 20Hz发布频率
+
         print(f"初始化VTOL演示飞行: {self.vehicle_type}_{self.vehicle_id}")
         print(f"加载了 {len(self.targets)} 个目标点")
 
@@ -102,10 +113,61 @@ class VTOLDemoFlight:
         """初始化ROS通信"""
         self.flight_controller.init_ros_communication()
         print("演示控制器ROS通信初始化完成")
+        
+        # 启动定时器持续发布condition状态
+        self.start_condition_timer()
+
+    def start_condition_timer(self):
+        """启动condition状态定时发布"""
+        if self.condition_timer is None:
+            try:
+                import rospy
+                self.condition_timer = rospy.Timer(
+                    rospy.Duration(1.0 / self.condition_publish_rate),
+                    self.timer_condition_publish_callback
+                )
+                self.condition_timer_running = True
+                print(f"启动condition定时器，发布频率: {self.condition_publish_rate}Hz")
+            except Exception as e:
+                print(f"⚠️ 启动condition定时器失败: {e}")
+                self.condition_timer_running = False
+
+    def stop_condition_timer(self):
+        """停止condition状态定时发布"""
+        if self.condition_timer is not None:
+            try:
+                self.condition_timer.shutdown()
+                self.condition_timer = None
+                self.condition_timer_running = False
+                print("停止condition定时器")
+            except Exception as e:
+                print(f"⚠️ 停止condition定时器时出错: {e}")
+                # 即使出错，也标记为已停止
+                self.condition_timer = None
+                self.condition_timer_running = False
+
+    def timer_condition_publish_callback(self, event):
+        """定时器回调函数，持续发布当前condition状态"""
+        try:
+            self.flight_controller.ros_comm.publish_condition(self.current_condition)
+        except Exception as e:
+            print(f"⚠️ 定时发布condition失败: {e}")
+
+    def get_condition_status(self):
+        """获取当前condition状态信息"""
+        # 使用我们自己的标志来跟踪定时器状态
+        timer_status = "运行中" if self.condition_timer_running else "已停止"
+        return {
+            'current_condition': self.current_condition,
+            'timer_status': timer_status,
+            'publish_rate': self.condition_publish_rate
+        }
 
     def publish_condition(self, condition_value):
-        """发布condition状态"""
+        """发布condition状态（立即发布并更新当前状态）"""
+        self.current_condition = condition_value
         self.flight_controller.ros_comm.publish_condition(condition_value)
+        print(f"更新当前condition状态: 0x{condition_value:02X}")
     
     def update_mission_condition(self, target_index):
         """根据目标点索引更新并发送condition"""
@@ -113,8 +175,8 @@ class VTOLDemoFlight:
             target = self.targets[target_index]
             condition = target.get('condition', 0x00)
             
-            print(f"到达目标点 {target['name']}，发送Condition: 0x{condition:02X}")
-            self.publish_condition(condition)
+            print(f"到达目标点 {target['name']}，更新Condition: 0x{condition:02X}")
+            self.current_condition = condition  # 更新当前状态，定时器会持续发布
 
     @property
     def current_position(self):
@@ -211,6 +273,10 @@ class VTOLDemoFlight:
             
             # 3. 起飞
             print("\n📋 步骤3: 执行起飞...")
+            # 设置起飞状态
+            self.current_condition = 0x01  # 起飞状态
+            print(f"设置起飞状态: 0x{self.current_condition:02X}")
+            
             if not self.takeoff_sequence():
                 print("❌ 起飞失败，任务终止")
                 return False
@@ -259,8 +325,15 @@ class VTOLDemoFlight:
             
             # 5. 返航
             print(f"\n🏠 所有目标点访问完成 ({success_count}/{len(self.targets)})，开始返航...")
+            # 设置返航状态
+            self.current_condition = 0x04  # 返航状态
+            print(f"设置返航状态: 0x{self.current_condition:02X}")
+            
             if self.return_to_launch():
                 print("✅ 返航成功")
+                # 设置着陆完成状态
+                self.current_condition = 0x05
+                print(f"设置着陆完成状态: 0x{self.current_condition:02X}")
             else:
                 print("⚠️ 返航完成（可能有异常）")
             
@@ -271,12 +344,18 @@ class VTOLDemoFlight:
             
         except KeyboardInterrupt:
             print(f"\n⚠️ 用户中断任务")
+            # 设置中断状态
+            self.current_condition = 0xFF  # 任务中断状态
+            print(f"设置任务中断状态: 0x{self.current_condition:02X}")
             self.emergency_stop()
             return False
         except Exception as e:
             print(f"\n❌ 任务执行异常: {e}")
             import traceback
             traceback.print_exc()
+            # 设置异常状态
+            self.current_condition = 0xEE  # 任务异常状态
+            print(f"设置任务异常状态: 0x{self.current_condition:02X}")
             self.emergency_stop()
             return False
 
@@ -305,11 +384,22 @@ class VTOLDemoFlight:
             final_pos = self.current_position
             print(f"最终位置: ({final_pos.x:.1f}, {final_pos.y:.1f}, {final_pos.z:.1f})")
         
+        # 显示condition状态信息
+        condition_status = self.get_condition_status()
+        print(f"最终状态: 0x{condition_status['current_condition']:02X}")
+        print(f"定时器状态: {condition_status['timer_status']}")
+        print(f"发布频率: {condition_status['publish_rate']}Hz")
+        
         print("任务完成! 🎉")
 
     def shutdown(self):
         """关闭系统"""
         print("关闭VTOL演示系统...")
+        
+        # 停止condition定时器
+        self.stop_condition_timer()
+        
+        # 关闭飞行控制器
         self.flight_controller.shutdown()
 
 

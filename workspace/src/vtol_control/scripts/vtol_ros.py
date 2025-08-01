@@ -99,13 +99,16 @@ class VTOLROSCommunicator:
         self.condition_callback = callback_func
 
     def publish_condition(self, condition_value):
-        """发布condition状态"""
+        """发布condition状态 - 支持持续发布模式"""
+        msg = Int8()
+        msg.data = condition_value
+        self.condition_pub.publish(msg)
+        
+        # 只在状态变化时打印日志，避免定时器产生过多输出
         if condition_value != self.last_sent_condition:
-            msg = Int8()
-            msg.data = condition_value
-            self.condition_pub.publish(msg)
             self.last_sent_condition = condition_value
             print(f"发送Condition: 0x{condition_value:02X}")
+        # 如果是定时器持续发布，不打印重复日志
 
     def send_command(self, cmd_str):
         """发送xtdrone命令"""

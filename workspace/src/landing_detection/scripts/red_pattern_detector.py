@@ -371,7 +371,7 @@ class RedPatternDetector:
                     white_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
             
             # 发布结果
-            if candidate:
+            if candidate is not None:
                 target_msg = PointStamped()
                 target_msg.header.stamp = rospy.Time.now()
                 target_msg.header.frame_id = "camera"
@@ -388,8 +388,6 @@ class RedPatternDetector:
                     rospy.loginfo(f"Red platform detected via YOLO11 at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
                     rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
-            else:
-                rospy.logwarn("No red platform detected by either CV or YOLO11")
             
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate, red_mask, white_mask)
@@ -409,7 +407,7 @@ class RedPatternDetector:
         """
         self.latest_yolo_detection = msg
         self.yolo_detection_time = rospy.Time.now()
-        rospy.logdebug(f"Received YOLO11 detection: x={msg.x}, y={msg.y}, z={msg.z}")
+        #rospy.logdebug(f"Received YOLO11 detection: x={msg.x}, y={msg.y}, z={msg.z}")
     
     def is_yolo_detection_valid(self):
         """
