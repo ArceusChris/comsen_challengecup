@@ -31,8 +31,5 @@ catkin_install_python(PROGRAMS
   scripts/vtol_map.py
   scripts/vtol_smoothpath.py
   scripts/image_capture.py
-  scripts/test_basic.py
-  scripts/test_modules.py
-  scripts/test_navigation.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

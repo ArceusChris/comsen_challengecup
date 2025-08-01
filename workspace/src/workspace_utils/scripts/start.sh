@@ -239,6 +239,101 @@ start_communication() {
     log_info "通信脚本启动完成"
 }
 
+# 启动通信脚本 - 合并版本（优化后台进程）
+start_communication_combined() {
+    log_step "启动通信脚本（合并版本）..."
+    
+    # 等待必要的话题
+    wait_for_topic "/gazebo/model_states" 30
+    
+    # 在同一个终端中启动两个通信脚本
+    gnome-terminal --tab --title="双机通信服务" -- bash -c "
+        cd ~/XTDrone/communication/
+        source ~/.bashrc
+        
+        # 函数：启动并监控通信服务
+        start_comm_service() {
+            local script_name=\$1
+            local aircraft_type=\$2
+            local aircraft_id=\$3
+            local service_name=\"\${aircraft_type}通信服务\"
+            
+            echo \"启动 \$service_name...\"
+            nohup python3 \$script_name \$aircraft_type \$aircraft_id > /tmp/comm_\${aircraft_type}.log 2>&1 &
+            local pid=\$!
+            echo \"\$service_name PID: \$pid\"
+            
+            # 检查进程是否成功启动
+            sleep 2
+            if kill -0 \$pid 2>/dev/null; then
+                echo \"✓ \$service_name 启动成功\"
+                echo \$pid > /tmp/comm_\${aircraft_type}.pid
+                return \$pid
+            else
+                echo \"✗ \$service_name 启动失败\"
+                return 0
+            fi
+        }
+        
+        echo '=== 双机通信服务启动中 ==='
+        
+        start_comm_service 'vtol_communication.py' 'standard_vtol' '0'
+        VTOL_PID=\$?
+        
+        sleep 5
+        
+        start_comm_service 'multirotor_communication.py' 'iris' '0'
+        IRIS_PID=\$?
+        
+        echo ''
+        echo '=== 通信服务状态总览 ==='
+        echo \"VTOL通信服务 PID: \$VTOL_PID\"
+        echo \"IRIS通信服务 PID: \$IRIS_PID\"
+        echo ''
+        echo '日志文件位置:'
+        echo '  VTOL: /tmp/comm_standard_vtol.log'
+        echo '  IRIS: /tmp/comm_iris.log'
+        echo ''
+        echo '实时监控命令:'
+        echo '  tail -f /tmp/comm_*.log'
+        echo '  rostopic list | grep xtdrone'
+        echo '  rostopic echo /xtdrone/standard_vtol_0/cmd'
+        
+        # 进程监控函数
+        monitor_comm_services() {
+            while true; do
+                sleep 10
+                local running=0
+                for pid in \$VTOL_PID \$IRIS_PID; do
+                    if [ \$pid -gt 0 ] && kill -0 \$pid 2>/dev/null; then
+                        running=\$((running + 1))
+                    fi
+                done
+                echo \"[\$(date '+%H:%M:%S')] 通信服务运行状态: \$running/2\"
+                if [ \$running -eq 0 ]; then
+                    echo \"所有通信服务已停止\"
+                    break
+                fi
+            done
+        }
+        
+        # 清理函数
+        cleanup_comm() {
+            echo '停止通信服务...'
+            [ \$VTOL_PID -gt 0 ] && kill \$VTOL_PID 2>/dev/null || true
+            [ \$IRIS_PID -gt 0 ] && kill \$IRIS_PID 2>/dev/null || true
+            exit 0
+        }
+        trap cleanup_comm INT TERM
+        
+        monitor_comm_services
+        exec bash
+    " &
+    
+    sleep 12
+    log_info "双机通信脚本启动完成"
+}
+
 # 启动位姿真值服务
 start_pose_ground_truth() {
     log_step "启动位姿真值服务..."
@@ -263,6 +358,97 @@ start_pose_ground_truth() {
     
     sleep 2
     log_info "位姿真值服务启动完成"
+}
+
+# 启动位姿真值服务 - 合并版本（优化后台进程）
+start_pose_ground_truth_combined() {
+    log_step "启动位姿真值服务（合并版本）..."
+    
+    # 在同一个终端中启动两个位姿服务
+    gnome-terminal --tab --title="双机位姿服务" -- bash -c "
+        cd ~/XTDrone/sensing/pose_ground_truth/
+        source ~/.bashrc
+        
+        # 函数：启动并监控服务
+        start_pose_service() {
+            local aircraft_type=\$1
+            local count=\$2
+            local service_name=\"\${aircraft_type}位姿服务\"
+            
+            echo \"启动 \$service_name...\"
+            nohup python3 get_local_pose.py \$aircraft_type \$count > /tmp/pose_\${aircraft_type}.log 2>&1 &
+            local pid=\$!
+            echo \"\$service_name PID: \$pid\"
+            
+            # 检查进程是否成功启动
+            sleep 1
+            if kill -0 \$pid 2>/dev/null; then
+                echo \"✓ \$service_name 启动成功\"
+                echo \$pid > /tmp/pose_\${aircraft_type}.pid
+                return \$pid
+            else
+                echo \"✗ \$service_name 启动失败\"
+                return 0
+            fi
+        }
+        
+        echo '=== 双机位姿服务启动中 ==='
+        
+        start_pose_service 'standard_vtol' '1'
+        VTOL_POSE_PID=\$?
+        
+        sleep 2
+        
+        start_pose_service 'iris' '1'
+        IRIS_POSE_PID=\$?
+        
+        echo ''
+        echo '=== 位姿服务状态总览 ==='
+        echo \"VTOL位姿服务 PID: \$VTOL_POSE_PID\"
+        echo \"IRIS位姿服务 PID: \$IRIS_POSE_PID\"
+        echo ''
+        echo '日志文件位置:'
+        echo '  VTOL: /tmp/pose_standard_vtol.log'
+        echo '  IRIS: /tmp/pose_iris.log'
+        echo ''
+        echo '实时监控命令:'
+        echo '  tail -f /tmp/pose_*.log'
+        echo '  rostopic echo /xtdrone/standard_vtol_0/pose'
+        echo '  rostopic echo /xtdrone/iris_0/pose'
+        
+        # 进程监控函数
+        monitor_pose_services() {
+            while true; do
+                sleep 10
+                local running=0
+                for pid in \$VTOL_POSE_PID \$IRIS_POSE_PID; do
+                    if [ \$pid -gt 0 ] && kill -0 \$pid 2>/dev/null; then
+                        running=\$((running + 1))
+                    fi
+                done
+                echo \"[\$(date '+%H:%M:%S')] 位姿服务运行状态: \$running/2\"
+                if [ \$running -eq 0 ]; then
+                    echo \"所有位姿服务已停止\"
+                    break
+                fi
+            done
+        }
+        
+        # 清理函数
+        cleanup_pose() {
+            echo '停止位姿服务...'
+            [ \$VTOL_POSE_PID -gt 0 ] && kill \$VTOL_POSE_PID 2>/dev/null || true
+            [ \$IRIS_POSE_PID -gt 0 ] && kill \$IRIS_POSE_PID 2>/dev/null || true
+            exit 0
+        }
+        trap cleanup_pose INT TERM
+        
+        monitor_pose_services
+        exec bash
+    " &
+    
+    sleep 5
+    log_info "双机位姿真值服务启动完成"
 }
 
 # 启动GPS引导点发布
@@ -654,6 +840,95 @@ show_final_status() {
     echo ""
 }
 
+# 显示最终状态和指南 - 合并版本
+show_final_status_combined() {
+    log_step "显示最终状态（合并版本）..."
+    
+    echo ""
+    echo "=== 系统状态检查（合并版本 - 7个终端窗口）==="
+    
+    # 检查Gazebo
+    if pgrep -f "gazebo" > /dev/null; then
+        log_info "✓ 终端1: Gazebo 仿真环境运行中"
+    else
+        log_error "✗ 终端1: Gazebo 未运行"
+    fi
+    
+    # 检查通信服务
+    if pgrep -f "vtol_communication" > /dev/null && pgrep -f "multirotor_communication" > /dev/null; then
+        log_info "✓ 终端2: 双机通信服务运行中"
+    else
+        log_warn "⚠ 终端2: 部分通信服务可能未运行"
+    fi
+    
+    # 检查位姿服务
+    pose_count=$(pgrep -f "get_local_pose" | wc -l)
+    if [ $pose_count -ge 2 ]; then
+        log_info "✓ 终端3: 双机位姿服务运行中"
+    else
+        log_warn "⚠ 终端3: 位姿服务数量不足 ($pose_count/2)"
+    fi
+    
+    # 检查坐标发布服务
+    if pgrep -f "Pub_first_point" > /dev/null && pgrep -f "Pub_downtown" > /dev/null; then
+        log_info "✓ 终端4: 坐标发布服务运行中"
+    else
+        log_warn "⚠ 终端4: 部分坐标发布服务可能未运行"
+    fi
+    
+    # 检查数据记录
+    if pgrep -f "rosbag" > /dev/null; then
+        log_info "✓ 终端5: 数据记录服务运行中"
+    else
+        log_warn "⚠ 终端5: 数据记录服务可能未运行"
+    fi
+    
+    # 检查虚拟RC
+    if pgrep -f "virtual_rc" > /dev/null; then
+        log_info "✓ 终端6: 虚拟RC服务运行中"
+    else
+        log_warn "⚠ 终端6: 虚拟RC服务可能未运行"
+    fi
+    
+    # 检查感知检测
+    yolo_count=$(pgrep -f "yolo11_inference" | wc -l)
+    if [ $yolo_count -ge 2 ] && pgrep -f "multi_pattern_detection" > /dev/null; then
+        log_info "✓ 终端7: 感知检测服务运行中"
+    else
+        log_warn "⚠ 终端7: 部分感知检测服务可能未运行"
+    fi
+    
+    # 检查控制服务
+    if pgrep -f "vtol_demo" > /dev/null && pgrep -f "multirotor_control" > /dev/null; then
+        log_info "✓ 终端8: 控制服务运行中"
+    else
+        log_warn "⚠ 终端8: 部分控制服务可能未运行"
+    fi
+    
+    echo ""
+    echo "=== 合并优化说明 ==="
+    echo "原版本: 约15+个独立终端窗口"
+    echo "合并版本: 7-8个终端窗口"
+    echo "减少终端数量: ~50%"
+    echo ""
+    echo "终端窗口分配："
+    echo "1. 仿真程序 (Gazebo + PX4)"
+    echo "2. 双机通信服务 (VTOL + IRIS 通信)"
+    echo "3. 双机位姿服务 (位姿真值获取)"
+    echo "4. 坐标发布服务 (GPS + 居民区 + 目标控制)"
+    echo "5. 数据记录服务 (ROS bag)"
+    echo "6. 虚拟RC服务 (手动控制信号)"
+    echo "7. 感知检测服务 (YOLO + 着陆检测)"
+    echo "8. 控制服务 (坐标变换 + 双机控制)"
+    echo ""
+    echo "=== 优化优势 ==="
+    echo "• 减少窗口切换和管理复杂度"
+    echo "• 相关功能组合在一起，便于监控"
+    echo "• 每个终端显示对应服务的PID，便于调试"
+    echo "• 保持原有功能完整性"
+    echo ""
+}
+
 # 显示使用说明
 show_usage() {
     echo "使用说明："
@@ -668,7 +943,48 @@ show_usage() {
     echo "- 数据记录文件将保存在 ~/XTDrone/zhihang2025/ 目录下"
 }
 
-# 主函数
+# 主函数 - 合并版本
+main_combined() {
+    log_info "=== 无人机双机协同自主搜救任务 - 全自动启动脚本（合并版本）==="
+    echo ""
+    
+    # 检查先决条件
+    check_prerequisites
+    
+    # 清理之前的进程
+    cleanup_processes
+    
+    # 设置ROS环境
+    setup_ros_environment
+    
+    # 启动各项服务（合并版本 - 减少终端数量）
+    start_simulation                    # 1个终端：仿真环境
+    check_px4_status
+    configure_px4_params
+    start_communication_combined        # 1个终端：双机通信
+    start_pose_ground_truth_combined    # 1个终端：双机位姿
+    start_coordinate_publishers_combined # 1个终端：GPS+居民区+目标控制
+    start_data_recording               # 1个终端：数据记录
+    start_virtual_rc                   # 1个终端：虚拟RC
+    start_perception_combined          # 1个终端：YOLO检测+着陆检测
+    start_control_combined             # 1个终端：坐标变换+双机控制+定位
+    
+    # 检查服务状态
+    sleep 15
+    if check_services_status; then
+        log_info "=== 所有服务启动完成（共7个终端窗口）==="
+        show_final_status_combined
+        echo ""
+        show_usage
+        echo ""
+        log_info "系统已准备就绪，请启动您的无人机控制程序"
+    else
+        log_error "某些服务启动失败，请检查日志"
+        exit 1
+    fi
+}
+
+# 主函数 - 原版本（保留以备选择）
 main() {
     log_info "=== 无人机双机协同自主搜救任务 - 全自动启动脚本 ==="
     echo ""
@@ -719,5 +1035,30 @@ main() {
 # 信号处理
 trap 'log_info "收到中断信号，正在清理..."; cleanup_processes; exit 0' INT TERM
 
-# 运行主函数
-main "$@"
+# 根据参数选择运行版本
+if [ "$1" = "--combined" ] || [ "$1" = "-c" ]; then
+    log_info "使用合并版本（减少终端数量）"
+    main_combined "$@"
+elif [ "$1" = "--original" ] || [ "$1" = "-o" ]; then
+    log_info "使用原始版本（每个服务独立终端）"
+    main "$@"
+elif [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  -c, --combined    使用合并版本（推荐，减少约50%终端数量）"
+    echo "  -o, --original    使用原始版本（每个服务独立终端）"
+    echo "  -h, --help        显示此帮助信息"
+    echo ""
+    echo "默认使用合并版本"
+    echo ""
+    echo "示例:"
+    echo "  $0                # 使用合并版本"
+    echo "  $0 --combined     # 使用合并版本"
+    echo "  $0 --original     # 使用原始版本"
+    exit 0
+else
+    # 默认使用合并版本
+    log_info "使用合并版本（默认，使用 --help 查看选项）"
+    main_combined "$@"
+fi

@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 多机多旋翼控制启动文件 -->
+    
+    <!-- 参数定义 -->
+    <arg name="num_drones" default="2" doc="无人机数量"/>
+    <arg name="multirotor_type" default="iris" doc="多旋翼类型"/>
+    <arg name="control_type" default="vel" doc="控制类型"/>
+    
+    <!-- 第一架无人机 -->
+    <group ns="iris_0">
+        <node name="multirotor_control_0" 
+              pkg="iris_control" 
+              type="multirotor_control.py" 
+              args="$(arg multirotor_type) 0 $(arg control_type)"
+              output="screen"
+              respawn="false">
+              
+            <!-- 话题重映射 -->
+            <remap from="/mavros/state" to="/iris_0/mavros/state"/>
+            <remap from="/mavros/local_position/pose" to="/iris_0/mavros/local_position/pose"/>
+            <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_0/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+            <remap from="/mavros/cmd/arming" to="/iris_0/mavros/cmd/arming"/>
+            <remap from="/mavros/set_mode" to="/iris_0/mavros/set_mode"/>
+            <remap from="/mavros/cmd/takeoff" to="/iris_0/mavros/cmd/takeoff"/>
+            <remap from="/mavros/cmd/land" to="/iris_0/mavros/cmd/land"/>
+            
+        </node>
+    </group>
+    
+    <!-- 第二架无人机 -->
+    <group ns="iris_1" if="$(eval arg('num_drones') >= 2)">
+        <node name="multirotor_control_1" 
+              pkg="iris_control" 
+              type="multirotor_control.py" 
+              args="$(arg multirotor_type) 1 $(arg control_type)"
+              output="screen"
+              respawn="false">
+              
+            <!-- 话题重映射 -->
+            <remap from="/mavros/state" to="/iris_1/mavros/state"/>
+            <remap from="/mavros/local_position/pose" to="/iris_1/mavros/local_position/pose"/>
+            <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_1/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+            <remap from="/mavros/cmd/arming" to="/iris_1/mavros/cmd/arming"/>
+            <remap from="/mavros/set_mode" to="/iris_1/mavros/set_mode"/>
+            <remap from="/mavros/cmd/takeoff" to="/iris_1/mavros/cmd/takeoff"/>
+            <remap from="/mavros/cmd/land" to="/iris_1/mavros/cmd/land"/>
+            
+        </node>
+    </group>
+    
+    <!-- 第三架无人机 -->
+    <group ns="iris_2" if="$(eval arg('num_drones') >= 3)">
+        <node name="multirotor_control_2" 
+              pkg="iris_control" 
+              type="multirotor_control.py" 
+              args="$(arg multirotor_type) 2 $(arg control_type)"
+              output="screen"
+              respawn="false">
+              
+            <!-- 话题重映射 -->
+            <remap from="/mavros/state" to="/iris_2/mavros/state"/>
+            <remap from="/mavros/local_position/pose" to="/iris_2/mavros/local_position/pose"/>
+            <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_2/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+            <remap from="/mavros/cmd/arming" to="/iris_2/mavros/cmd/arming"/>
+            <remap from="/mavros/set_mode" to="/iris_2/mavros/set_mode"/>
+            <remap from="/mavros/cmd/takeoff" to="/iris_2/mavros/cmd/takeoff"/>
+            <remap from="/mavros/cmd/land" to="/iris_2/mavros/cmd/land"/>
+            
+        </node>
+    </group>
+    
+    <!-- 第四架无人机 -->
+    <group ns="iris_3" if="$(eval arg('num_drones') >= 4)">
+        <node name="multirotor_control_3" 
+              pkg="iris_control" 
+              type="multirotor_control.py" 
+              args="$(arg multirotor_type) 3 $(arg control_type)"
+              output="screen"
+              respawn="false">
+              
+            <!-- 话题重映射 -->
+            <remap from="/mavros/state" to="/iris_3/mavros/state"/>
+            <remap from="/mavros/local_position/pose" to="/iris_3/mavros/local_position/pose"/>
+            <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_3/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+            <remap from="/mavros/cmd/arming" to="/iris_3/mavros/cmd/arming"/>
+            <remap from="/mavros/set_mode" to="/iris_3/mavros/set_mode"/>
+            <remap from="/mavros/cmd/takeoff" to="/iris_3/mavros/cmd/takeoff"/>
+            <remap from="/mavros/cmd/land" to="/iris_3/mavros/cmd/land"/>
+            
+        </node>
+    </group>
+    
+    <!-- 启动RViz进行可视化监控 -->
+    <node name="rviz" 
+          pkg="rviz" 
+          type="rviz" 
+          args="-d $(find iris_control)/config/multi_drone.rviz"
+          output="screen"
+          if="$(eval arg('num_drones') > 1)"/>
+          
+</launch>

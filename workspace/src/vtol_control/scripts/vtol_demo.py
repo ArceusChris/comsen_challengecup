@@ -7,10 +7,17 @@ VTOL无人机演示飞行主控脚本（简化版）
 具体的飞行控制委托给 VTOLFlightController
 '''
 
+import sys
+import os
 import time
 import math
 import yaml
-import os
+
+# 添加当前脚本目录到Python路径，用于导入本地模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 from vtol_map import VTOLMap, ZoneType
 from vtol_fly import VTOLFlightController
 

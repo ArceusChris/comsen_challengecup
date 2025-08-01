@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 参数定义 -->
+    <arg name="debug" default="false" doc="启用调试模式，会启动tf树查看器"/>
+    <arg name="iris_namespace" default="iris_0" doc="iris无人机的命名空间"/>
+    <arg name="vtol_namespace" default="standard_vtol_0" doc="vtol无人机的命名空间"/>
+    <arg name="output" default="screen" doc="节点输出模式: screen, log"/>
+    
+    <!-- MAVROS Pose to TF转换节点 -->
+    <node pkg="tf_transform" 
+          type="mavros_pose_to_tf.py" 
+          name="mavros_pose_to_tf" 
+          output="$(arg output)"
+          required="true">
+        
+        <!-- 节点描述 -->
+        <param name="~description" value="Convert MAVROS pose messages to TF transforms for multi-UAV system"/>
+        
+        <!-- 可选的话题重映射 -->
+        <remap from="/iris_0/mavros/local_position/pose" 
+               to="/$(arg iris_namespace)/mavros/local_position/pose"/>
+        <remap from="/standard_vtol_0/mavros/local_position/pose" 
+               to="/$(arg vtol_namespace)/mavros/local_position/pose"/>
+               
+    </node>
+    
+    <!-- 调试模式：启动TF树查看器 -->
+    <group if="$(arg debug)">
+        <node pkg="rqt_tf_tree" type="rqt_tf_tree" name="tf_tree_viewer" output="screen"/>
+        <node pkg="tf2_tools" type="view_frames.py" name="tf_monitor" output="screen"/>
+    </group>
+    
+    <!-- 日志信息 -->
+    <node pkg="rospy_tutorials" type="talker" name="startup_logger" output="screen" unless="false">
+        <param name="~startup_message" value="MAVROS Pose to TF converter launched successfully"/>
+    </node>
+    
+</launch>

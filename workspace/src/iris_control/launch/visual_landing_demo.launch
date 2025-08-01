@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 视觉降落演示启动文件 -->
+    
+    <!-- 参数定义 -->
+    <arg name="multirotor_type" default="iris" doc="多旋翼类型"/>
+    <arg name="multirotor_id" default="0" doc="多旋翼ID"/>
+    <arg name="control_type" default="vel" doc="控制类型"/>
+    <arg name="visual_target_type" default="landing_target_camo" doc="视觉降落目标类型：landing_target_camo, landing_target_red, landing_target_custom"/>
+    
+    <!-- 视觉降落演示节点 -->
+    <node name="visual_landing_demo" 
+          pkg="iris_control" 
+          type="multirotor_control.py" 
+          args="$(arg multirotor_type) $(arg multirotor_id) $(arg control_type) demo_visual_landing $(arg visual_target_type)"
+          output="screen"
+          respawn="false">
+          
+        <!-- 话题重映射 -->
+        <remap from="/mavros/state" to="/iris_$(arg multirotor_id)/mavros/state"/>
+        <remap from="/mavros/local_position/pose" to="/iris_$(arg multirotor_id)/mavros/local_position/pose"/>
+        <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_$(arg multirotor_id)/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+        <remap from="/mavros/cmd/arming" to="/iris_$(arg multirotor_id)/mavros/cmd/arming"/>
+        <remap from="/mavros/set_mode" to="/iris_$(arg multirotor_id)/mavros/set_mode"/>
+        <remap from="/mavros/cmd/takeoff" to="/iris_$(arg multirotor_id)/mavros/cmd/takeoff"/>
+        <remap from="/mavros/cmd/land" to="/iris_$(arg multirotor_id)/mavros/cmd/land"/>
+        
+        <!-- 视觉目标话题 -->
+        <remap from="/$(arg visual_target_type)" to="/iris_$(arg multirotor_id)/$(arg visual_target_type)"/>
+        
+    </node>
+    
+    <!-- 可选：启动视觉检测节点 -->
+    <include file="$(find precision_landing)/launch/precision_landing.launch" if="$(eval arg('visual_target_type') != '')">
+        <arg name="camera_topic" value="/iris_$(arg multirotor_id)/camera/image_raw"/>
+        <arg name="target_type" value="$(arg visual_target_type)"/>
+        <arg name="output_topic" value="/iris_$(arg multirotor_id)/$(arg visual_target_type)"/>
+    </include>
+    
+</launch>

@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 参数配置 -->
+    <arg name="vehicle_type" default="standard_vtol" doc="VTOL vehicle type"/>
+    <arg name="vehicle_id" default="0" doc="Vehicle ID"/>
+    <arg name="world" default="$(find mavlink_sitl_gazebo)/worlds/empty.world" doc="Gazebo world file"/>
+    <arg name="sdf" default="$(find mavlink_sitl_gazebo)/models/standard_vtol/standard_vtol.sdf" doc="Vehicle SDF model"/>
+    <arg name="verbose" default="false" doc="Enable verbose output"/>
+    <arg name="debug" default="false" doc="Enable debug mode"/>
+    <arg name="gui" default="true" doc="Enable Gazebo GUI"/>
+    <arg name="headless" default="false" doc="Enable headless mode"/>
+    
+    <!-- Gazebo仿真环境 -->
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+        <arg name="world_name" value="$(arg world)"/>
+        <arg name="debug" value="$(arg debug)"/>
+        <arg name="verbose" value="$(arg verbose)"/>
+        <arg name="paused" value="false"/>
+        <arg name="respawn_gazebo" value="false"/>
+        <arg name="gui" value="$(arg gui)"/>
+        <arg name="headless" value="$(arg headless)"/>
+    </include>
+
+    <!-- PX4 SITL -->
+    <node name="sitl" pkg="px4" type="px4" output="screen"
+          args="$(find px4)/build/px4_sitl_default/etc -s etc/init.d-posix/rcS">
+        <env name="PX4_SIM_MODEL" value="gazebo_standard_vtol"/>
+        <env name="PX4_ESTIMATOR" value="ekf2"/>
+    </node>
+
+    <!-- 生成VTOL模型 -->
+    <node name="$(anon vehicle_spawn)" pkg="gazebo_ros" type="spawn_model" output="screen"
+          args="-sdf -file $(arg sdf) -model $(arg vehicle_type)_$(arg vehicle_id) -x 0 -y 0 -z 0.1"/>
+
+    <!-- MAVROS节点 -->
+    <include file="$(find mavros)/launch/px4.launch">
+        <arg name="fcu_url" value="udp://:14540@127.0.0.1:14557"/>
+        <arg name="gcs_url" value=""/>
+        <arg name="tgt_system" value="1"/>
+        <arg name="tgt_component" value="1"/>
+        <arg name="log_output" value="screen"/>
+    </include>
+
+    <!-- VTOL演示节点 -->
+    <node pkg="vtol_control" 
+          type="vtol_demo.py" 
+          name="vtol_demo_flight" 
+          output="screen"
+          respawn="false"
+          launch-prefix="bash -c 'sleep 10; $0 $@' ">
+        <param name="vehicle_type" value="$(arg vehicle_type)" />
+        <param name="vehicle_id" value="$(arg vehicle_id)" />
+    </node>
+
+    <!-- 静态变换发布器 -->
+    <node pkg="tf2_ros" 
+          type="static_transform_publisher" 
+          name="base_link_to_camera_link"
+          args="0 0 0 0 0 0 1 base_link camera_link" />
+
+</launch>

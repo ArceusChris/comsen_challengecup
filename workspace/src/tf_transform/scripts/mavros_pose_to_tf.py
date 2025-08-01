@@ -101,7 +101,7 @@ class MavrosPoseToTF:
         # 下视相机变换 (下方0.03m)
         # 机体坐标系(x前y左z上) -> 下视相机坐标系(x右y下z朝地面)
         # 需要的变换: 机体x(前)->相机-z(下), 机体y(左)->相机-x(右), 机体z(上)->相机-y(下)
-        # 四元数: (0.5, -0.5, 0.5, 0.5) - 正确的下视相机变换
+  
         camera_tf = TransformStamped()
         camera_tf.header.stamp = stamp
         camera_tf.header.frame_id = "iris_0/base_link"
@@ -109,7 +109,7 @@ class MavrosPoseToTF:
         camera_tf.transform.translation.x = 0.0
         camera_tf.transform.translation.y = 0.0
         camera_tf.transform.translation.z = -0.03
-        # 四元数: (0.5, -0.5, 0.5, 0.5) - z轴指向地面(下方)
+
         camera_tf.transform.rotation.x = 0.707107
         camera_tf.transform.rotation.y = -0.707107
         camera_tf.transform.rotation.z = 0.0
@@ -130,7 +130,7 @@ class MavrosPoseToTF:
         camera_tf.transform.translation.x = 0.0
         camera_tf.transform.translation.y = 0.0
         camera_tf.transform.translation.z = -0.03
-        # 四元数: (0.5, -0.5, 0.5, 0.5) - 正确的下视相机变换
+
         camera_tf.transform.rotation.x = 0.707107
         camera_tf.transform.rotation.y = -0.707107
         camera_tf.transform.rotation.z = 0.0

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- YOLO11推理节点 - Iris机型专用启动文件 -->
+    
+    <include file="$(find perception)/launch/yolo11_inference.launch">
+        <arg name="aircraft_type" value="iris"/>
+        <arg name="model_path" value="models/yolo11n_original.pt"/>
+        <arg name="confidence_threshold" value="0.6"/>
+        <arg name="publish_pointcloud" value="true"/>
+    </include>
+    
+    <!-- 打印启动信息 -->
+    <node name="startup_info" pkg="rospy" type="echo" args="启动YOLO11推理节点 - Iris机型" output="screen" if="false"/>
+    
+</launch>

@@ -7,8 +7,16 @@ VTOL无人机飞行控制模块
 从 vtol_demo.py 中提取的飞行控制逻辑
 '''
 
+import sys
+import os
 import time
 import math
+
+# 添加当前脚本目录到Python路径，用于导入本地模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 from vtol_map import VTOLMap, ZoneType
 from vtol_Astar import VTOLAstarPlanner
 from vtol_ros import VTOLROSCommunicator

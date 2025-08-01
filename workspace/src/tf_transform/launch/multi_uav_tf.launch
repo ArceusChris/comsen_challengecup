@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 多无人机TF变换启动文件 -->
+    
+    <!-- 启动MAVROS位姿到TF转换节点 -->
+    <node pkg="tf_transform" 
+          type="mavros_pose_to_tf.py" 
+          name="mavros_pose_to_tf" 
+          output="screen"
+          respawn="true"
+          respawn_delay="2">
+        
+        <!-- 节点日志级别 -->
+        <env name="ROSCONSOLE_CONFIG_FILE" value="$(find tf_transform)/config/log_config.yaml" if="false"/>
+        
+    </node>
+    
+    <!-- 可选：发布静态坐标系变换 -->
+    <!-- 发布world到map的变换（如果需要） -->
+    <node pkg="tf2_ros" type="static_transform_publisher" 
+          name="world_to_map_publisher"
+          args="0 0 0 0 0 0 1 world map">
+    </node>
+    
+    <!-- 启动信息 -->
+    <node pkg="rostopic" type="rostopic" name="tf_startup_info"
+          args="echo -n 1 /tf" output="screen" 
+          launch-prefix="timeout 3"/>
+          
+</launch>

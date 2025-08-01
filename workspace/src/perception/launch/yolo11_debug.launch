@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- YOLO11推理节点调试启动文件 -->
+    <!-- 使用方法：roslaunch perception yolo11_debug.launch aircraft_type:=iris -->
+    
+    <!-- 机型选择参数 -->
+    <arg name="aircraft_type" default="standard_vtol" doc="Aircraft type: iris or standard_vtol"/>
+    
+    <!-- 调试参数 -->
+    <arg name="debug" default="false" doc="Enable debug mode"/>
+    <arg name="log_level" default="info" doc="Log level: debug, info, warn, error"/>
+    
+    <!-- 设置日志级别 -->
+    <env name="ROSCONSOLE_CONFIG_FILE" value="$(find perception)/config/rosconsole.config" if="$(arg debug)"/>
+    
+    <!-- YOLO11推理节点 -->
+    <node name="yolo11_inference_node" 
+          pkg="perception" 
+          type="yolo11_inference.py" 
+          output="screen"
+          respawn="true"
+          respawn_delay="5">
+        
+        <!-- 基本参数 -->
+        <param name="aircraft_type" value="$(arg aircraft_type)"/>
+        <param name="model_path" value="models/yolo11n_original.pt"/>
+        <param name="confidence_threshold" value="0.5"/>  <!-- 调试时使用较低阈值 -->
+        <param name="iou_threshold" value="0.45"/>
+        
+        <!-- 点云参数 -->
+        <param name="publish_pointcloud" value="true"/>
+        <param name="pointcloud_frame_id" value="map"/>
+        <param name="max_points_per_cloud" value="500"/>  <!-- 调试时减少点数 -->
+        
+        <!-- 设置日志级别 -->
+        <param name="log_level" value="$(arg log_level)"/>
+        
+    </node>
+    
+    <!-- 可选：启动RViz进行可视化 -->
+    <node name="rviz" pkg="rviz" type="rviz" 
+          args="-d $(find perception)/config/yolo11_debug.rviz" 
+          if="$(arg debug)"/>
+    
+    <!-- 可选：启动rqt_image_view查看检测结果 -->
+    <node name="image_viewer" pkg="rqt_image_view" type="rqt_image_view" 
+          if="$(arg debug)"/>
+    
+    <!-- 打印调试信息 -->
+    <group if="$(arg debug)">
+        <param name="debug_info" value="
+=== YOLO11调试模式启动 ===
+机型: $(arg aircraft_type)
+日志级别: $(arg log_level)
+调试模式: $(arg debug)
+已启动RViz和图像查看器
+========================
+"/>
+    </group>
+
+</launch>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 参数配置 -->
+    <arg name="vehicle_type" default="standard_vtol" doc="VTOL vehicle type"/>
+    <arg name="vehicle_id" default="0" doc="Vehicle ID"/>
+
+    <!-- VTOL演示节点 -->
+    <node pkg="vtol_control" 
+          type="vtol_demo.py" 
+          name="vtol_demo_node" 
+          output="screen"
+          respawn="false">
+    </node>
+
+</launch>

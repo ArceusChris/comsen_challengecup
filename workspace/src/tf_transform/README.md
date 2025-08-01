@@ -139,3 +139,73 @@ cd /root/workspace/tf_transform
 3. 下视相机的z轴指向地面方向
 4. 前视相机的z轴指向飞行方向
 5. 如果动态TF有问题，可以使用静态TF作为备用
+
+# TF Transform Package
+
+这个包提供了将MAVROS位姿消息转换为TF变换的功能，支持多无人机系统。
+
+## 功能特性
+
+- 将iris_0和standard_vtol_0的MAVROS位姿转换为TF变换
+- 发布相机坐标系变换（前视相机和下视相机）
+- 支持多无人机协同仿真
+
+## 启动文件
+
+### 1. 基础启动文件
+```bash
+roslaunch tf_transform mavros_pose_to_tf.launch
+```
+
+### 2. 调试模式启动文件
+```bash
+roslaunch tf_transform mavros_pose_to_tf_debug.launch debug:=true
+```
+
+### 3. 多无人机系统启动文件
+```bash
+roslaunch tf_transform multi_uav_tf.launch
+```
+
+## 参数说明
+
+- `debug`: 是否启用调试模式（默认: false）
+- `iris_namespace`: iris无人机的命名空间（默认: iris_0）
+- `vtol_namespace`: vtol无人机的命名空间（默认: standard_vtol_0）
+- `output`: 节点输出模式（默认: screen）
+
+## 发布的TF变换
+
+### iris_0无人机
+- `map` → `iris_0/base_link`
+- `iris_0/base_link` → `iris_0/stereo_camera_frame` (前视相机)
+- `iris_0/base_link` → `iris_0/camera_link` (下视相机)
+
+### standard_vtol_0无人机
+- `map` → `standard_vtol_0/base_link`
+- `standard_vtol_0/base_link` → `standard_vtol_0/camera_link` (下视相机)
+
+## 订阅的话题
+
+- `/iris_0/mavros/local_position/pose`
+- `/standard_vtol_0/mavros/local_position/pose`
+
+## 使用示例
+
+1. 启动PX4 SITL仿真
+2. 启动MAVROS
+3. 启动本包的TF转换节点：
+```bash
+roslaunch tf_transform mavros_pose_to_tf.launch
+```
+
+4. 查看TF树：
+```bash
+rosrun tf2_tools view_frames.py
+evince frames.pdf
+```
+
+或使用调试模式：
+```bash
+roslaunch tf_transform mavros_pose_to_tf_debug.launch debug:=true
+```

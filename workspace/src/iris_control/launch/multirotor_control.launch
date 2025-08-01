@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 多旋翼控制节点启动文件 -->
+    
+    <!-- 参数定义 -->
+    <arg name="multirotor_type" default="iris" doc="多旋翼类型，如：iris, solo, typhoon_h480"/>
+    <arg name="multirotor_id" default="0" doc="多旋翼ID，用于多机场景"/>
+    <arg name="control_type" default="vel" doc="控制类型：vel(速度控制), pos(位置控制), att(姿态控制)"/>
+    <arg name="demo_mode" default="false" doc="是否启用演示模式"/>
+    <arg name="visual_target_type" default="landing_target_camo" doc="视觉降落目标类型"/>
+    
+    <!-- 命名空间，用于多机场景 -->
+    <group ns="iris_$(arg multirotor_id)">
+        
+        <!-- 主控制节点 -->
+        <node name="multirotor_control" 
+              pkg="iris_control" 
+              type="multirotor_control.py" 
+              output="screen"
+              respawn="false">
+            
+            <!-- 传递参数给节点 -->
+            <param name="multirotor_type" value="$(arg multirotor_type)"/>
+            <param name="multirotor_id" value="$(arg multirotor_id)"/>
+            <param name="control_type" value="$(arg control_type)"/>
+            <param name="demo_mode" value="$(arg demo_mode)"/>
+            <param name="visual_target_type" value="$(arg visual_target_type)"/>
+            
+            <!-- 重新映射话题，适应多机场景 -->
+            <remap from="/mavros/state" to="/iris_$(arg multirotor_id)/mavros/state"/>
+            <remap from="/mavros/local_position/pose" to="/iris_$(arg multirotor_id)/mavros/local_position/pose"/>
+            <remap from="/mavros/setpoint_velocity/cmd_vel_unstamped" to="/iris_$(arg multirotor_id)/mavros/setpoint_velocity/cmd_vel_unstamped"/>
+            <remap from="/mavros/cmd/arming" to="/iris_$(arg multirotor_id)/mavros/cmd/arming"/>
+            <remap from="/mavros/set_mode" to="/iris_$(arg multirotor_id)/mavros/set_mode"/>
+            <remap from="/mavros/cmd/takeoff" to="/iris_$(arg multirotor_id)/mavros/cmd/takeoff"/>
+            <remap from="/mavros/cmd/land" to="/iris_$(arg multirotor_id)/mavros/cmd/land"/>
+            
+            <!-- 视觉降落相关话题重映射 -->
+            <remap from="/landing_target_camo" to="/iris_$(arg multirotor_id)/landing_target_camo"/>
+            <remap from="/landing_target_red" to="/iris_$(arg multirotor_id)/landing_target_red"/>
+            <remap from="/landing_target_custom" to="/iris_$(arg multirotor_id)/landing_target_custom"/>
+            
+            <!-- 智航杯相关话题重映射 -->
+            <remap from="/zhihang2025/first_man/pose" to="/zhihang2025/first_man/pose"/>
+            <remap from="/zhihang2025/third_man/pose" to="/zhihang2025/third_man/pose"/>
+            <remap from="/zhihang2025/vtol_land_sub/done" to="/zhihang2025/vtol_land_sub/done"/>
+            
+        </node>
+        
+        
+    </group>
+    
+</launch>

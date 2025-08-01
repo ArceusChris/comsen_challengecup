@@ -30,8 +30,23 @@
    multirotor_control.execute_mission(use_visual_landing=True, visual_target_type="landing_target_red")
 """
 
-from drone_control import DroneController
 import sys
+import os
+
+# 添加脚本目录到Python路径
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)
+
+# 现在导入DroneController
+try:
+    from drone_control import DroneController
+except ImportError:
+    # 如果还是导入失败，尝试直接执行文件并获取类
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("drone_control", os.path.join(script_dir, "drone_control.py"))
+    drone_control_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(drone_control_module)
+    DroneController = drone_control_module.DroneController
 import math
 import time
 import numpy as np
@@ -740,23 +755,38 @@ def demo_visual_landing():
     print("=== 视觉降落演示完成 ===")
 
 def main():
+    # 过滤掉ROS的重映射参数
+    filtered_args = []
+    for arg in sys.argv:
+        if ':=' not in arg:  # 过滤掉包含':='的ROS重映射参数
+            filtered_args.append(arg)
+    
     # 检查是否是演示模式
-    if len(sys.argv) > 4 and "demo_visual_landing" in sys.argv:
+    if len(filtered_args) > 4 and "demo_visual_landing" in filtered_args:
         demo_visual_landing()
         return
     
-    if len(sys.argv) < 4:
-        print("用法: python3 multirotor_control.py <multirotor_type> <multirotor_id> <control_type>")
-        print("视觉降落演示: python3 multirotor_control.py <multirotor_type> <multirotor_id> <control_type> demo_visual_landing [target_type]")
-        print("支持的目标类型: landing_target_camo, landing_target_red, landing_target_custom")
-        return
-
-    multirotor_type = sys.argv[1]
-    multirotor_id = int(sys.argv[2])
-    control_type = sys.argv[3]
-
-    # 创建控制器和控制类
+    # 先尝试从命令行参数获取，如果没有则使用默认值
+    if len(filtered_args) >= 4:
+        multirotor_type = filtered_args[1]
+        multirotor_id = int(filtered_args[2])
+        control_type = filtered_args[3]
+    else:
+        # 使用默认值，这些可能会被ROS参数覆盖
+        multirotor_type = "iris"
+        multirotor_id = 0
+        control_type = "vel"
+    
+    # 先创建控制器（这会初始化ROS节点）
     controller = DroneController(multirotor_type, multirotor_id, control_type)
+    
+    # 如果通过ROS参数服务器获取参数，则更新参数
+    if rospy.has_param('~multirotor_type'):
+        controller.multirotor_type = rospy.get_param('~multirotor_type', multirotor_type)
+    if rospy.has_param('~multirotor_id'):
+        controller.multirotor_id = rospy.get_param('~multirotor_id', multirotor_id)
+    if rospy.has_param('~control_type'):
+        controller.control_type = rospy.get_param('~control_type', control_type)
     multirotor_control = MultirotorControl(controller)
     
     node = PoseNode()

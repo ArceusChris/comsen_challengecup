@@ -34,3 +34,8 @@ dataset/
 yolo_dataset/
 build/
 devel/
+
+logs/
+log/
+
+.catkin_tools/

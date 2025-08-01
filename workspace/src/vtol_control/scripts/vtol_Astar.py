@@ -6,11 +6,19 @@
 将规划后的路径可视化，默认起点在(0, 0, 30)，目标点在(1600, 200, 30)。
 '''
 
+import sys
+import os
 import heapq
 import math
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
+
+# 添加当前脚本目录到Python路径，用于导入本地模块
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 from vtol_map import VTOLMap, ZoneType
 
 

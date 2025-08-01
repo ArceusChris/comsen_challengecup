@@ -25,8 +25,5 @@ include_directories(
 # Install Python scripts
 catkin_install_python(PROGRAMS
   scripts/yolo11_inference.py
-  scripts/simple_test.py
-  scripts/test_average_position_feature.py
-  scripts/test_yolo_functionality.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

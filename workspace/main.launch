@@ -1,0 +1,129 @@
+<?xml version="1.0"?>
+<launch>
+    
+    <arg name="mode" default="both" />
+
+    <node pkg="tf_transform" 
+          type="mavros_pose_to_tf.py" 
+          name="mavros_pose_to_tf" 
+          output="screen">  
+    </node>
+
+    <node name="iris_yolo11_inference_node" 
+            pkg="perception" 
+            type="yolo11_inference.py" 
+            output="screen"
+            respawn="false">
+        
+        <!-- 基本参数 -->
+        <param name="aircraft_type" value="iris"/>
+        <param name="model_path" value="models/yolo11n_original.pt"/>
+        <param name="confidence_threshold" value="0.6"/>
+        <param name="iou_threshold" value="0.45"/>
+        <!-- 点云参数 -->
+        <param name="publish_pointcloud" value="true"/>
+        
+    </node>
+    <!-- 打印启动信息 -->
+    <node name="startup_info" pkg="rospy" type="echo" args="启动YOLO11推理节点 - Standard VTOL机型" output="screen" if="false"/>
+    
+    <node name="vtol_yolo11_inference_node" 
+            pkg="perception" 
+            type="yolo11_inference.py" 
+            output="screen"
+            respawn="false">
+        
+        <!-- 基本参数 -->
+        <param name="aircraft_type" value="standard_vtol"/>
+        <param name="model_path" value="models/yolo11n_original.pt"/>
+        <param name="confidence_threshold" value="0.6"/>
+        <param name="iou_threshold" value="0.45"/>
+        <!-- 点云参数 -->
+        <param name="publish_pointcloud" value="true"/>
+        
+    </node>
+    
+    <!-- 打印启动信息 -->
+    <node name="startup_info" pkg="rospy" type="echo" args="启动YOLO11推理节点 - Iris机型" output="screen" if="false"/>
+   
+    <!-- 迷彩图案检测器 -->
+    <group if="$(eval arg('mode') == 'camouflage' or arg('mode') == 'both')">
+        <node pkg="landing_detection" 
+              type="camouflage_pattern_detector.py" 
+              name="camouflage_detector" 
+              output="screen">
+            
+            <!-- 检测参数 -->
+            <param name="white_threshold" value="200" />
+            <param name="min_circle_radius" value="30" />
+            <param name="max_circle_radius" value="200" />
+            <param name="min_contour_area" value="1000" />
+            
+            <!-- 纹理分析参数 -->
+            <param name="texture_window_size" value="15" />
+            <param name="edge_threshold" value="50" />
+            <param name="circularity_threshold" value="0.6" />
+        </node>
+    </group>
+    
+    <!-- 红色图案检测器 -->
+    <group if="$(eval arg('mode') == 'red' or arg('mode') == 'both')">
+        <node pkg="landing_detection" 
+              type="red_pattern_detector.py" 
+              name="red_detector" 
+              output="screen">
+            
+            <!-- 红色检测参数 (HSV) -->
+            <param name="red_lower1_h" value="0" />
+            <param name="red_lower1_s" value="100" />
+            <param name="red_lower1_v" value="100" />
+            <param name="red_upper1_h" value="10" />
+            <param name="red_upper1_s" value="255" />
+            <param name="red_upper1_v" value="255" />
+            
+            <param name="red_lower2_h" value="170" />
+            <param name="red_lower2_s" value="100" />
+            <param name="red_lower2_v" value="100" />
+            <param name="red_upper2_h" value="180" />
+            <param name="red_upper2_s" value="255" />
+            <param name="red_upper2_v" value="255" />
+            
+            <!-- 白色检测参数 (HSV) -->
+            <param name="white_lower_h" value="0" />
+            <param name="white_lower_s" value="0" />
+            <param name="white_lower_v" value="200" />
+            <param name="white_upper_h" value="180" />
+            <param name="white_upper_s" value="30" />
+            <param name="white_upper_v" value="255" />
+            
+            <!-- 几何参数 -->
+            <param name="min_circle_radius" value="30" />
+            <param name="max_circle_radius" value="200" />
+            <param name="min_contour_area" value="1000" />
+            <param name="circularity_threshold" value="0.65" />
+            <param name="red_area_threshold" value="0.6" />
+        </node>
+    </group>
+
+    <node pkg="vtol_control" 
+          type="vtol_demo.py" 
+          name="vtol_demo_flight" 
+          output="screen"
+          respawn="false">
+        <param name="vehicle_type" value="standard_vtol" />
+        <param name="vehicle_id" value="0" />
+    </node>
+
+    <node name="multirotor_control" 
+        pkg="iris_control" 
+        type="multirotor_control.py" 
+        output="screen"
+        respawn="false">
+    
+        <!-- 传递参数给节点 -->
+        <param name="multirotor_type" value="iris"/>
+        <param name="multirotor_id" value="0"/>
+        <param name="control_type" value="vel"/>
+
+    </node>
+</launch>

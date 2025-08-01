@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+    <!-- 参数配置 -->
+    <arg name="vehicle_type" default="standard_vtol" doc="VTOL vehicle type"/>
+    <arg name="vehicle_id" default="0" doc="Vehicle ID"/>
+    <arg name="fcu_url" default="udp://:14540@localhost:14557" doc="FCU connection URL"/>
+    <arg name="gcs_url" default="" doc="GCS connection URL"/>
+    <arg name="tgt_system" default="1" doc="Target system ID"/>
+    <arg name="tgt_component" default="1" doc="Target component ID"/>
+    <arg name="log_output" default="screen" doc="Log output destination"/>
+    <arg name="fcu_protocol" default="v2.0" doc="FCU protocol version"/>
+    <arg name="respawn_mavros" default="false" doc="Enable mavros respawn"/>
+
+    <!-- MAVROS节点 -->
+    <include file="$(find mavros)/launch/node.launch">
+        <arg name="pluginlists_yaml" value="$(find mavros)/launch/apm_pluginlists.yaml" />
+        <arg name="config_yaml" value="$(find mavros)/launch/apm_config.yaml" />
+        <arg name="fcu_url" value="$(arg fcu_url)" />
+        <arg name="gcs_url" value="$(arg gcs_url)" />
+        <arg name="tgt_system" value="$(arg tgt_system)" />
+        <arg name="tgt_component" value="$(arg tgt_component)" />
+        <arg name="log_output" value="$(arg log_output)" />
+        <arg name="fcu_protocol" value="$(arg fcu_protocol)" />
+        <arg name="respawn_mavros" value="$(arg respawn_mavros)" />
+    </include>
+
+    <!-- VTOL演示节点 -->
+    <node pkg="vtol_control" 
+          type="vtol_demo.py" 
+          name="vtol_demo_flight" 
+          output="screen"
+          respawn="false">
+        <param name="vehicle_type" value="$(arg vehicle_type)" />
+        <param name="vehicle_id" value="$(arg vehicle_id)" />
+        
+        <!-- 重新映射话题 -->
+        <remap from="/mavros/local_position/pose" to="/mavros/local_position/pose"/>
+        <remap from="/mavros/state" to="/mavros/state"/>
+        <remap from="/mavros/cmd/arming" to="/mavros/cmd/arming"/>
+        <remap from="/mavros/set_mode" to="/mavros/set_mode"/>
+        <remap from="/mavros/setpoint_position/local" to="/mavros/setpoint_position/local"/>
+        <remap from="/vtol_condition" to="/vtol_condition"/>
+    </node>
+
+    <!-- 静态变换发布器 (如果需要) -->
+    <node pkg="tf2_ros" 
+          type="static_transform_publisher" 
+          name="base_link_to_camera_link"
+          args="0 0 0 0 0 0 1 base_link camera_link" />
+
+</launch>

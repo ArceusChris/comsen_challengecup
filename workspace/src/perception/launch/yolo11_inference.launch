@@ -1,25 +1,65 @@
 <?xml version="1.0"?>
 <launch>
-    <!-- YOLO11推理节点 -->
-    <node name="yolo11_inference" pkg="perception" type="yolo11_inference.py" output="screen">
-        <!-- 输入图像话题 -->
-        <param name="input_topic" value="/iris_0/camera/image_raw" />
-        
-        <!-- 输出图像话题 -->
-        <param name="output_topic" value="/iris_0/camera/detection_image" />
-        
-        <!-- 模型路径（相对于perception包目录或绝对路径） -->
-        <param name="model_path" value="$(find perception)/models/yolo11n.pt" />
-        
-        <!-- 置信度阈值 -->
-        <param name="confidence_threshold" value="0.5" />
-        
-        <!-- IOU阈值 -->
-        <param name="iou_threshold" value="0.45" />
-    </node>
+    <!-- YOLO11推理节点启动文件 -->
+    <!-- 
+    使用方法：
+    1. 启动iris机型：
+       roslaunch perception yolo11_inference.launch aircraft_type:=iris
     
-    <!-- 可选：启动image_view来显示检测结果 -->
-    <node name="detection_viewer" pkg="image_view" type="image_view" output="screen">
-        <remap from="image" to="/yolo11/detection_image" />
+    2. 启动standard_vtol机型：
+       roslaunch perception yolo11_inference.launch aircraft_type:=standard_vtol
+    
+    3. 自定义参数启动：
+       roslaunch perception yolo11_inference.launch aircraft_type:=iris model_path:=models/custom_yolo11.pt confidence_threshold:=0.7
+    -->
+
+    <!-- 机型选择参数 -->
+    <arg name="aircraft_type" default="standard_vtol" doc="Aircraft type: iris or standard_vtol"/>
+    
+    <!-- 模型参数 -->
+    <arg name="model_path" default="models/yolo11n_original.pt" doc="Path to YOLO11 model file"/>
+    <arg name="confidence_threshold" default="0.6" doc="Detection confidence threshold"/>
+    <arg name="iou_threshold" default="0.45" doc="IOU threshold for non-max suppression"/>
+    
+    <!-- 点云参数 -->
+    <arg name="publish_pointcloud" default="true" doc="Enable pointcloud publishing"/>
+
+    <!-- 节点组：按机型分组 -->
+    <group ns="yolo11_inference">
+        <!-- YOLO11推理节点 -->
+        <node name="yolo11_inference_node" 
+              pkg="perception" 
+              type="yolo11_inference.py" 
+              output="screen"
+              respawn="false">
+            
+            <!-- 基本参数 -->
+            <param name="aircraft_type" value="$(arg aircraft_type)"/>
+            <param name="model_path" value="$(arg model_path)"/>
+            <param name="confidence_threshold" value="$(arg confidence_threshold)"/>
+            <param name="iou_threshold" value="$(arg iou_threshold)"/>
+            <!-- 点云参数 -->
+            <param name="publish_pointcloud" value="$(arg publish_pointcloud)"/>
+            
+        </node>
+    </group>
+
+    <!-- 信息输出 -->
+    <node name="launch_info" pkg="rospy_tutorials" type="talker" output="screen" if="false">
+        <!-- 这个节点仅用于在launch文件中显示启动信息，实际不会运行 -->
     </node>
+
+    <!-- 打印启动信息 -->
+    <group>
+        <param name="launch_info_text" value="
+=== YOLO11推理节点启动信息 ===
+机型: $(arg aircraft_type)
+模型路径: $(arg model_path)
+置信度阈值: $(arg confidence_threshold)
+IOU阈值: $(arg iou_threshold)
+点云发布: $(arg publish_pointcloud)
+===============================
+"/>
+    </group>
+
 </launch>
