@@ -102,7 +102,8 @@ class PIDController:
         self.prev_error = 0.0
         self.integral = 0.0
         self.prev_time = None
-        
+        self.a=1.0
+
     def update(self, error, current_time=None):
         """
         更新PID控制器
