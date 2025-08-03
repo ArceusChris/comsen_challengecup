@@ -371,7 +371,7 @@ class CamouflagePatternDetector:
                 candidate = self.use_yolo_as_backup()
             
             # 发布结果
-            if candidate:
+            if candidate is not None:
                 target_msg = PointStamped()
                 target_msg.header.stamp = rospy.Time.now()
                 target_msg.header.frame_id = "camera"
@@ -387,6 +387,7 @@ class CamouflagePatternDetector:
                 if source == 'yolo11':
                     rospy.loginfo(f"Camouflage platform detected via YOLO11 backup at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
+<<<<<<< HEAD
                     rospy.loginfo(f"Camouflage platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
                 if self.should_use_yolo_backup():
@@ -394,6 +395,9 @@ class CamouflagePatternDetector:
                 else:
                     rospy.logdebug("No camouflage platform detected by CV (within timeout)")
             
+=======
+                    rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")      
+>>>>>>> origin/fix/iris_landing
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate)
             debug_msg = self.bridge.cv2_to_imgmsg(debug_image, "bgr8")
