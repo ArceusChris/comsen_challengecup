@@ -389,6 +389,7 @@ class CamouflagePatternDetector:
                 else:
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
                     rospy.loginfo(f"Camouflage platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
                 if self.should_use_yolo_backup():
@@ -396,6 +397,9 @@ class CamouflagePatternDetector:
                 else:
                     rospy.logdebug("No camouflage platform detected by CV (within timeout)")
             
+=======
+                    rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")      
+>>>>>>> origin/fix/iris_landing
 =======
                     rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")      
 >>>>>>> origin/fix/iris_landing
