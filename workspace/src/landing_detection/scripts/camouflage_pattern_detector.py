@@ -31,6 +31,11 @@ class CamouflagePatternDetector:
         self.latest_yolo_detection = None
         self.yolo_detection_time = None
         
+        # CV检测状态跟踪
+        self.last_cv_detection_time = None
+        self.cv_detection_timeout = 3.0  # CV检测超时时间（秒）
+        self.cv_detection_lost = False
+        
         # 检测参数
         self.white_threshold = 200  # 白色阈值
         self.min_circle_radius = 30
@@ -357,8 +362,12 @@ class CamouflagePatternDetector:
             # 检测迷彩降落平台
             candidate = self.detect_camouflage_circle(cv_image)
             
-            # 如果主检测器没有检测到目标，尝试使用YOLO11备用检测
-            if candidate is None:
+            # 更新CV检测状态
+            cv_detection_successful = candidate is not None
+            self.update_cv_detection_status(cv_detection_successful)
+            
+            # 如果CV检测失败且超时，使用YOLO备用检测
+            if candidate is None and self.should_use_yolo_backup():
                 candidate = self.use_yolo_as_backup()
             
             # 发布结果
@@ -376,16 +385,22 @@ class CamouflagePatternDetector:
                 # 根据检测来源显示不同的日志信息
                 source = candidate.get('source', 'cv')
                 if source == 'yolo11':
-                    rospy.loginfo(f"Camouflage platform detected via YOLO11 white at {candidate['center']} with confidence {candidate['total_score']:.2f}")
+                    rospy.loginfo(f"Camouflage platform detected via YOLO11 backup at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
-                    rospy.loginfo(f"Camouflage platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
+                    rospy.loginfo(f"Camouflage platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
-                rospy.logwarn("No camouflage platform detected by either CV or YOLO11")
+                if self.should_use_yolo_backup():
+                    rospy.logwarn("No camouflage platform detected by either CV (timeout) or YOLO11 backup")
+                else:
+                    rospy.logdebug("No camouflage platform detected by CV (within timeout)")
             
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate)
             debug_msg = self.bridge.cv2_to_imgmsg(debug_image, "bgr8")
             self.debug_pub.publish(debug_msg)
+            
+            # 更新CV检测状态
+            self.update_cv_detection_status(candidate is not None)
             
         except Exception as e:
             rospy.logerr(f"Error in camouflage detector: {e}")
@@ -431,6 +446,36 @@ class CamouflagePatternDetector:
         rospy.loginfo(f"Using YOLO11 backup detection for white target at ({yolo_candidate['center'][0]}, {yolo_candidate['center'][1]}) with confidence {yolo_candidate['total_score']:.2f}")
         
         return yolo_candidate
+    
+    def update_cv_detection_status(self, detection_successful):
+        """
+        更新CV检测状态
+        """
+        current_time = rospy.Time.now()
+        
+        if detection_successful:
+            self.last_cv_detection_time = current_time
+            if self.cv_detection_lost:
+                rospy.loginfo("CV detection recovered")
+                self.cv_detection_lost = False
+        else:
+            # 检查是否超时
+            if self.last_cv_detection_time is not None:
+                time_since_last_detection = (current_time - self.last_cv_detection_time).to_sec()
+                if time_since_last_detection > self.cv_detection_timeout and not self.cv_detection_lost:
+                    rospy.logwarn(f"CV detection lost for {time_since_last_detection:.1f}s, switching to YOLO backup")
+                    self.cv_detection_lost = True
+            else:
+                # 首次启动时没有检测到目标
+                if not self.cv_detection_lost:
+                    rospy.logwarn("Initial CV detection failed, will use YOLO backup if available")
+                    self.cv_detection_lost = True
+    
+    def should_use_yolo_backup(self):
+        """
+        判断是否应该使用YOLO备用检测
+        """
+        return self.cv_detection_lost
     
     def run(self):
         rospy.loginfo("Camouflage pattern detector running...")

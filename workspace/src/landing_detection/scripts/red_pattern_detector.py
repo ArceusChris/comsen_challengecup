@@ -31,22 +31,25 @@ class RedPatternDetector:
         self.latest_yolo_detection = None
         self.yolo_detection_time = None
         
+        # CV检测状态跟踪
+        self.last_cv_detection_time = None
+        self.cv_detection_timeout = 3.0  # CV检测超时时间（秒）
+        self.cv_detection_lost = False
+        
         # 红色检测参数 (HSV色彩空间)
         # 红色在HSV中有两个范围：0-10和170-180
-        self.red_lower1 = np.array([0, 100, 100])    # 红色范围1下界
+        self.red_lower1 = np.array([0, 43, 46])    # 红色范围1下界
         self.red_upper1 = np.array([10, 255, 255])   # 红色范围1上界
-        self.red_lower2 = np.array([170, 100, 100])  # 红色范围2下界
+        self.red_lower2 = np.array([156, 43, 46])  # 红色范围2下界
         self.red_upper2 = np.array([180, 255, 255])  # 红色范围2上界
         
-        # 白色检测参数
-        self.white_lower = np.array([0, 0, 200])     # 白色下界(HSV)
-        self.white_upper = np.array([180, 30, 255])  # 白色上界(HSV)
+
         
         # 几何参数
-        self.min_circle_radius = 30
-        self.max_circle_radius = 200
-        self.min_contour_area = 1000
-        self.circularity_threshold = 0.65
+        self.min_circle_radius = 5
+        self.max_circle_radius = 250
+        self.min_contour_area = 5
+        self.circularity_threshold = 0.5
         
         # 检测参数
         self.red_area_threshold = 0.6  # 红色区域面积比例阈值
@@ -68,24 +71,13 @@ class RedPatternDetector:
         red_mask = cv2.bitwise_or(mask1, mask2)
         
         # 形态学操作去噪声
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
         red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
         
         return red_mask
     
-    def create_white_mask(self, hsv_image):
-        """
-        创建白色掩码
-        """
-        white_mask = cv2.inRange(hsv_image, self.white_lower, self.white_upper)
-        
-        # 形态学操作
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
-        
-        return white_mask
+
     
     def detect_red_circle(self, image):
         """
@@ -94,9 +86,8 @@ class RedPatternDetector:
         # 转换为HSV色彩空间
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
-        # 创建红色和白色掩码
+        # 创建红色掩码
         red_mask = self.create_red_mask(hsv)
-        white_mask = self.create_white_mask(hsv)
         
         # 寻找红色区域的轮廓
         contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -125,25 +116,16 @@ class RedPatternDetector:
                     # 验证红色区域比例
                     red_ratio = self.calculate_red_ratio(red_mask, center, radius)
                     
-                    # 检测内部白色圆圈
-                    white_circle_score = self.detect_inner_white_circle(white_mask, center, radius)
-                    
-                    # 检测十字标记
-                    cross_score = self.detect_cross_pattern(white_mask, center, radius)
-                    
-                    # 综合评分
-                    total_score = (red_ratio * 0.3 + 
-                                 white_circle_score * 0.35 + 
-                                 cross_score * 0.25 + 
-                                 circularity * 0.1)
+                    # 简化评分，只考虑红色比例和圆形度
+                    total_score = red_ratio * 0.7 + circularity * 0.3
                     
                     if total_score > 0.5:  # 总体阈值
                         candidates.append({
                             'center': center,
                             'radius': radius,
                             'red_ratio': red_ratio,
-                            'white_score': white_circle_score,
-                            'cross_score': cross_score,
+                            'white_score': 0,  # 保持兼容性
+                            'cross_score': 0,  # 保持兼容性
                             'circularity': circularity,
                             'total_score': total_score
                         })
@@ -151,9 +133,9 @@ class RedPatternDetector:
         # 返回得分最高的候选
         if candidates:
             best_candidate = max(candidates, key=lambda x: x['total_score'])
-            return best_candidate, red_mask, white_mask
+            return best_candidate, red_mask
         
-        return None, red_mask, white_mask
+        return None, red_mask
     
     def calculate_red_ratio(self, red_mask, center, radius):
         """
@@ -162,10 +144,6 @@ class RedPatternDetector:
         # 创建圆形掩码
         circle_mask = np.zeros(red_mask.shape, dtype=np.uint8)
         cv2.circle(circle_mask, center, radius, 255, -1)
-        
-        # 排除内部白色圆圈区域（假设内部白色圆圈半径为外圆的65%）
-        inner_radius = int(radius * 0.65)
-        cv2.circle(circle_mask, center, inner_radius, 0, -1)
         
         # 计算红色像素比例
         red_in_circle = cv2.bitwise_and(red_mask, circle_mask)
@@ -178,118 +156,9 @@ class RedPatternDetector:
         red_ratio = red_pixels / total_pixels
         return red_ratio
     
-    def detect_inner_white_circle(self, white_mask, center, outer_radius):
-        """
-        检测内部白色圆圈
-        """
-        cx, cy = center
-        
-        # 在外圆内部寻找白色圆圈
-        search_mask = np.zeros(white_mask.shape, dtype=np.uint8)
-        cv2.circle(search_mask, center, outer_radius, 255, -1)
-        
-        white_in_circle = cv2.bitwise_and(white_mask, search_mask)
-        
-        # 寻找白色区域的轮廓
-        contours, _ = cv2.findContours(white_in_circle, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        best_score = 0
-        best_white_center = None
-        best_white_radius = 0
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area < 300:  # 最小面积阈值
-                continue
-            
-            # 计算圆形度
-            perimeter = cv2.arcLength(contour, True)
-            if perimeter == 0:
-                continue
-                
-            circularity = 4 * math.pi * area / (perimeter * perimeter)
-            
-            if circularity > 0.6:  # 白色圆圈的圆形度阈值
-                # 获取轮廓的中心和半径
-                (wx, wy), w_radius = cv2.minEnclosingCircle(contour)
-                white_center = (int(wx), int(wy))
-                w_radius = int(w_radius)
-                
-                # 检查是否在外圆中心附近
-                distance = math.sqrt((wx - cx)**2 + (wy - cy)**2)
-                distance_score = max(0, 1 - distance / (outer_radius * 0.2))
-                
-                # 检查半径比例是否合理（内圆应该是外圆的40-70%）
-                radius_ratio = w_radius / outer_radius
-                if 0.3 <= radius_ratio <= 0.7:
-                    radius_score = 1.0
-                else:
-                    radius_score = max(0, 1 - abs(radius_ratio - 0.5) * 2)
-                
-                # 综合得分
-                score = circularity * distance_score * radius_score
-                
-                if score > best_score:
-                    best_score = score
-                    best_white_center = white_center
-                    best_white_radius = w_radius
-        
-        return best_score
+
     
-    def detect_cross_pattern(self, white_mask, center, radius):
-        """
-        检测白色十字标记
-        """
-        cx, cy = center
-        
-        # 十字检测范围（在白色圆圈内部）
-        cross_radius = min(radius // 3, 25)
-        
-        # 检测水平线
-        horizontal_scores = []
-        for dy in range(-2, 3):  # 检查中心附近几行
-            y = cy + dy
-            if 0 <= y < white_mask.shape[0]:
-                line_pixels = 0
-                total_pixels = 0
-                for dx in range(-cross_radius, cross_radius + 1):
-                    x = cx + dx
-                    if 0 <= x < white_mask.shape[1]:
-                        total_pixels += 1
-                        if white_mask[y, x] == 255:
-                            line_pixels += 1
-                
-                if total_pixels > 0:
-                    score = line_pixels / total_pixels
-                    horizontal_scores.append(score)
-        
-        horizontal_score = max(horizontal_scores) if horizontal_scores else 0
-        
-        # 检测垂直线
-        vertical_scores = []
-        for dx in range(-2, 3):  # 检查中心附近几列
-            x = cx + dx
-            if 0 <= x < white_mask.shape[1]:
-                line_pixels = 0
-                total_pixels = 0
-                for dy in range(-cross_radius, cross_radius + 1):
-                    y = cy + dy
-                    if 0 <= y < white_mask.shape[0]:
-                        total_pixels += 1
-                        if white_mask[y, x] == 255:
-                            line_pixels += 1
-                
-                if total_pixels > 0:
-                    score = line_pixels / total_pixels
-                    vertical_scores.append(score)
-        
-        vertical_score = max(vertical_scores) if vertical_scores else 0
-        
-        # 十字得分（两条线都需要检测到）
-        cross_score = min(horizontal_score, vertical_score)
-        return cross_score
-    
-    def draw_debug_info(self, image, candidate, red_mask, white_mask):
+    def draw_debug_info(self, image, candidate, red_mask):
         """
         绘制调试信息
         """
@@ -299,11 +168,8 @@ class RedPatternDetector:
         red_overlay = cv2.cvtColor(red_mask, cv2.COLOR_GRAY2BGR)
         red_overlay[:, :, 1:] = 0  # 只保留红色通道
         
-        white_overlay = cv2.cvtColor(white_mask, cv2.COLOR_GRAY2BGR)
-        
         # 叠加掩码（半透明）
         debug_image = cv2.addWeighted(debug_image, 0.7, red_overlay, 0.3, 0)
-        debug_image = cv2.addWeighted(debug_image, 0.8, white_overlay, 0.2, 0)
         
         if candidate:
             cx, cy = candidate['center']
@@ -322,11 +188,6 @@ class RedPatternDetector:
             # 绘制外圆
             cv2.circle(debug_image, (cx, cy), radius, circle_color, 3)
             
-            # 绘制内圆估计位置（仅对主检测器）
-            if candidate.get('source') != 'yolo11':
-                inner_radius = int(radius * 0.5)
-                cv2.circle(debug_image, (cx, cy), inner_radius, (255, 255, 0), 2)
-            
             # 绘制中心点
             cv2.circle(debug_image, (cx, cy), 5, (0, 0, 255), -1)
             
@@ -340,8 +201,6 @@ class RedPatternDetector:
                 f"Source: {source_text}",
                 f"Total: {candidate['total_score']:.2f}",
                 f"Red ratio: {candidate['red_ratio']:.2f}",
-                f"White: {candidate['white_score']:.2f}",
-                f"Cross: {candidate['cross_score']:.2f}",
                 f"Circularity: {candidate['circularity']:.2f}"
             ]
             
@@ -360,15 +219,18 @@ class RedPatternDetector:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             
             # 检测红色降落平台
-            candidate, red_mask, white_mask = self.detect_red_circle(cv_image)
+            candidate, red_mask = self.detect_red_circle(cv_image)
             
-            # 如果主检测器没有检测到目标，尝试使用YOLO11备用检测
-            if candidate is None:
+            # 更新CV检测状态
+            cv_detection_successful = candidate is not None
+            self.update_cv_detection_status(cv_detection_successful)
+            
+            # 如果CV检测失败且超时，或者CV检测成功但检测丢失状态下需要双重确认，使用YOLO备用检测
+            if candidate is None and self.should_use_yolo_backup():
                 candidate = self.use_yolo_as_backup()
                 # 为YOLO11检测创建空的掩码用于调试显示
                 if candidate is not None:
                     red_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
-                    white_mask = np.zeros(cv_image.shape[:2], dtype=np.uint8)
             
             # 发布结果
             if candidate:
@@ -385,16 +247,22 @@ class RedPatternDetector:
                 # 根据检测来源显示不同的日志信息
                 source = candidate.get('source', 'cv')
                 if source == 'yolo11':
-                    rospy.loginfo(f"Red platform detected via YOLO11 at {candidate['center']} with confidence {candidate['total_score']:.2f}")
+                    rospy.loginfo(f"Red platform detected via YOLO11 backup at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
+                    rospy.loginfo(f"Red platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
-                rospy.logwarn("No red platform detected by either CV or YOLO11")
+                if self.should_use_yolo_backup():
+                    rospy.logwarn("No red platform detected by either CV (timeout) or YOLO11 backup")
+                else:
+                    rospy.logdebug("No red platform detected by CV (within timeout)")
             
             # 发布调试图像
-            debug_image = self.draw_debug_info(cv_image, candidate, red_mask, white_mask)
+            debug_image = self.draw_debug_info(cv_image, candidate, red_mask)
             debug_msg = self.bridge.cv2_to_imgmsg(debug_image, "bgr8")
             self.debug_pub.publish(debug_msg)
+            
+            # 更新CV检测状态
+            self.update_cv_detection_status(candidate is not None)
             
         except Exception as e:
             rospy.logerr(f"Error in red detector: {e}")
@@ -445,6 +313,36 @@ class RedPatternDetector:
         rospy.loginfo(f"Using YOLO11 backup detection at ({yolo_candidate['center'][0]}, {yolo_candidate['center'][1]}) with confidence {yolo_candidate['total_score']:.2f}")
         
         return yolo_candidate
+    
+    def update_cv_detection_status(self, detection_successful):
+        """
+        更新CV检测状态
+        """
+        current_time = rospy.Time.now()
+        
+        if detection_successful:
+            self.last_cv_detection_time = current_time
+            if self.cv_detection_lost:
+                rospy.loginfo("CV detection recovered")
+                self.cv_detection_lost = False
+        else:
+            # 检查是否超时
+            if self.last_cv_detection_time is not None:
+                time_since_last_detection = (current_time - self.last_cv_detection_time).to_sec()
+                if time_since_last_detection > self.cv_detection_timeout and not self.cv_detection_lost:
+                    rospy.logwarn(f"CV detection lost for {time_since_last_detection:.1f}s, switching to YOLO backup")
+                    self.cv_detection_lost = True
+            else:
+                # 首次启动时没有检测到目标
+                if not self.cv_detection_lost:
+                    rospy.logwarn("Initial CV detection failed, will use YOLO backup if available")
+                    self.cv_detection_lost = True
+    
+    def should_use_yolo_backup(self):
+        """
+        判断是否应该使用YOLO备用检测
+        """
+        return self.cv_detection_lost
 
 if __name__ == '__main__':
     try:

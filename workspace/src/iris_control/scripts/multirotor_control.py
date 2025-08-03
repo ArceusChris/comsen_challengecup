@@ -56,7 +56,7 @@ from std_msgs.msg import Int8, String, Bool, Float64
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, CommandTOL, SetMode
 from vtol_Astar import VTOLAstarPlanner
-MAX_LINEAR = 20.0
+MAX_LINEAR = 10.0
 
 class PIDController:
     """
@@ -133,30 +133,30 @@ class MultirotorControl:
         self.MAX_LINEAR = MAX_LINEAR
         
         # 视觉降落相关参数
-        self.image_width = 512
-        self.image_height = 288
+        self.image_width = 1024
+        self.image_height = 576
         self.camera_center_x = self.image_width / 2
         self.camera_center_y = self.image_height / 2
         
         # PID控制参数
-        self.kp_x = 0.8      # X轴比例增益
+        self.kp_x = 3.0      # X轴比例增益
         self.ki_x = 0.1      # X轴积分增益
         self.kd_x = 0.15     # X轴微分增益
-        
-        self.kp_y = 0.8      # Y轴比例增益
+
+        self.kp_y = 3.0      # Y轴比例增益
         self.ki_y = 0.1      # Y轴积分增益
         self.kd_y = 0.15     # Y轴微分增益
         
-        self.kp_z = 0.6      # Z轴比例增益
+        self.kp_z = 3.0      # Z轴比例增益
         self.ki_z = 0.05     # Z轴积分增益
         self.kd_z = 0.12     # Z轴微分增益
         
         # 降落参数
         self.landing_threshold = 30    # 像素误差阈值
         self.min_altitude = 0.8        # 最小安全高度
-        self.descent_rate = 0.25       # 降落速率 m/s
+        self.descent_rate = 2.0      # 降落速率 m/s
         self.max_vel_xy = 1.5          # XY方向最大速度
-        self.max_vel_z = 0.8           # Z方向最大速度
+        self.max_vel_z = 2.0           # Z方向最大速度
         self.target_timeout = 3.0      # 目标丢失超时时间(秒)
         
         # 视觉降落状态变量
