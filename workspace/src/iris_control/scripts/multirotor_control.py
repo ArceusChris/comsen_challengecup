@@ -10,6 +10,7 @@
 3. 视觉精确降落控制
 4. PID控制算法
 5. 任务执行
+6. 动态PID参数调整
 
 视觉降落功能支持多种目标类型：
 - landing_target_camo: 迷彩降落目标
@@ -28,6 +29,34 @@
    
    或者在execute_mission中启用：
    multirotor_control.execute_mission(use_visual_landing=True, visual_target_type="landing_target_red")
+
+动态参数调整：
+节点运行时可以通过ROS参数服务器动态调整PID参数，参数每0.5秒自动检查更新一次。
+
+支持的动态参数：
+- ~pid_x/kp, ~pid_x/ki, ~pid_x/kd: X轴PID参数
+- ~pid_y/kp, ~pid_y/ki, ~pid_y/kd: Y轴PID参数  
+- ~pid_z/kp, ~pid_z/ki, ~pid_z/kd: Z轴PID参数
+- ~max_vel_xy: XY方向最大速度 (m/s)
+- ~max_vel_z: Z方向最大速度 (m/s)
+- ~landing_threshold: 降落像素误差阈值
+- ~min_altitude: 最小安全高度 (m)
+- ~descent_rate: 降落速率 (m/s)
+- ~target_timeout: 目标丢失超时时间 (s)
+
+动态调整示例：
+# 调整X轴PID参数
+rosparam set /multirotor_control_node/pid_x/kp 3.0
+rosparam set /multirotor_control_node/pid_x/ki 0.1
+rosparam set /multirotor_control_node/pid_x/kd 0.05
+
+# 调整速度限制
+rosparam set /multirotor_control_node/max_vel_xy 2.0
+rosparam set /multirotor_control_node/max_vel_z 1.5
+
+# 调整降落参数
+rosparam set /multirotor_control_node/landing_threshold 25
+rosparam set /multirotor_control_node/descent_rate 0.3
 """
 
 import sys
@@ -73,7 +102,8 @@ class PIDController:
         self.prev_error = 0.0
         self.integral = 0.0
         self.prev_time = None
-        
+        self.a=1.0
+
     def update(self, error, current_time=None):
         """
         更新PID控制器
@@ -126,6 +156,19 @@ class PIDController:
         self.prev_error = 0.0
         self.integral = 0.0
         self.prev_time = None
+    
+    def update_parameters(self, kp=None, ki=None, kd=None, output_limits=None, windup_limit=None):
+        """动态更新PID参数"""
+        if kp is not None:
+            self.kp = kp
+        if ki is not None:
+            self.ki = ki
+        if kd is not None:
+            self.kd = kd
+        if output_limits is not None:
+            self.output_limits = output_limits
+        if windup_limit is not None:
+            self.windup_limit = windup_limit
 
 class MultirotorControl:
     def __init__(self, controller):
@@ -138,6 +181,7 @@ class MultirotorControl:
         self.camera_center_x = self.image_width / 2
         self.camera_center_y = self.image_height / 2
         
+<<<<<<< HEAD
         # PID控制参数
         self.kp_x = 3.0      # X轴比例增益
         self.ki_x = 0.1      # X轴积分增益
@@ -158,6 +202,28 @@ class MultirotorControl:
         self.max_vel_xy = 1.5          # XY方向最大速度
         self.max_vel_z = 2.0           # Z方向最大速度
         self.target_timeout = 3.0      # 目标丢失超时时间(秒)
+=======
+        # PID控制参数 - 从ROS参数服务器获取，如果没有则使用默认值
+        self.kp_x = rospy.get_param('~pid_x/kp', 2.0)      # X轴比例增益
+        self.ki_x = rospy.get_param('~pid_x/ki', 0.0)      # X轴积分增益
+        self.kd_x = rospy.get_param('~pid_x/kd', 0.0)      # X轴微分增益
+        
+        self.kp_y = rospy.get_param('~pid_y/kp', 2.0)      # Y轴比例增益
+        self.ki_y = rospy.get_param('~pid_y/ki', 0.0)      # Y轴积分增益
+        self.kd_y = rospy.get_param('~pid_y/kd', 0.0)      # Y轴微分增益
+        
+        self.kp_z = rospy.get_param('~pid_z/kp', 1.0)      # Z轴比例增益
+        self.ki_z = rospy.get_param('~pid_z/ki', 0.0)      # Z轴积分增益
+        self.kd_z = rospy.get_param('~pid_z/kd', 0.0)      # Z轴微分增益
+        
+        # 其他控制参数也从ROS参数服务器获取
+        self.max_vel_xy = rospy.get_param('~max_vel_xy', 1.5)          # XY方向最大速度
+        self.max_vel_z = rospy.get_param('~max_vel_z', 1.0)            # Z方向最大速度
+        self.landing_threshold = rospy.get_param('~landing_threshold', 30)    # 像素误差阈值
+        self.min_altitude = rospy.get_param('~min_altitude', 0.65)            # 最小安全高度
+        self.descent_rate = rospy.get_param('~descent_rate', 0.25)            # 降落速率 m/s
+        self.target_timeout = rospy.get_param('~target_timeout', 2.0)         # 目标丢失超时时间(秒)
+>>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
         
         # 视觉降落状态变量
         self.target_detected = False
@@ -194,6 +260,125 @@ class MultirotorControl:
         # 视觉降落相关话题订阅器
         self.target_sub = None
         self.landing_enabled = False
+        
+        # 参数更新定时器 - 每0.5秒检查一次参数更新
+        self.param_update_timer = rospy.Timer(rospy.Duration(0.5), self._update_parameters_callback)
+        
+        # 打印当前PID参数
+        self._print_current_parameters()
+
+    def _print_current_parameters(self):
+        """打印当前PID参数"""
+        rospy.loginfo("=== 当前PID参数 ===")
+        rospy.loginfo(f"X轴PID: Kp={self.kp_x:.3f}, Ki={self.ki_x:.3f}, Kd={self.kd_x:.3f}")
+        rospy.loginfo(f"Y轴PID: Kp={self.kp_y:.3f}, Ki={self.ki_y:.3f}, Kd={self.kd_y:.3f}")
+        rospy.loginfo(f"Z轴PID: Kp={self.kp_z:.3f}, Ki={self.ki_z:.3f}, Kd={self.kd_z:.3f}")
+        rospy.loginfo(f"最大XY速度: {self.max_vel_xy:.2f} m/s")
+        rospy.loginfo(f"最大Z速度: {self.max_vel_z:.2f} m/s")
+        rospy.loginfo(f"降落阈值: {self.landing_threshold} px")
+        rospy.loginfo(f"最小高度: {self.min_altitude:.2f} m")
+        rospy.loginfo(f"下降速率: {self.descent_rate:.2f} m/s")
+        rospy.loginfo("==================")
+
+    def _update_parameters_callback(self, event):
+        """参数更新回调函数"""
+        try:
+            # 检查PID参数是否有更新
+            new_kp_x = rospy.get_param('~pid_x/kp', self.kp_x)
+            new_ki_x = rospy.get_param('~pid_x/ki', self.ki_x)
+            new_kd_x = rospy.get_param('~pid_x/kd', self.kd_x)
+            
+            new_kp_y = rospy.get_param('~pid_y/kp', self.kp_y)
+            new_ki_y = rospy.get_param('~pid_y/ki', self.ki_y)
+            new_kd_y = rospy.get_param('~pid_y/kd', self.kd_y)
+            
+            new_kp_z = rospy.get_param('~pid_z/kp', self.kp_z)
+            new_ki_z = rospy.get_param('~pid_z/ki', self.ki_z)
+            new_kd_z = rospy.get_param('~pid_z/kd', self.kd_z)
+            
+            # 检查其他控制参数
+            new_max_vel_xy = rospy.get_param('~max_vel_xy', self.max_vel_xy)
+            new_max_vel_z = rospy.get_param('~max_vel_z', self.max_vel_z)
+            new_landing_threshold = rospy.get_param('~landing_threshold', self.landing_threshold)
+            new_min_altitude = rospy.get_param('~min_altitude', self.min_altitude)
+            new_descent_rate = rospy.get_param('~descent_rate', self.descent_rate)
+            new_target_timeout = rospy.get_param('~target_timeout', self.target_timeout)
+            
+            # 检查是否有参数变化
+            parameters_changed = False
+            
+            # 更新X轴PID参数
+            if (new_kp_x != self.kp_x or new_ki_x != self.ki_x or new_kd_x != self.kd_x or
+                new_max_vel_xy != self.max_vel_xy):
+                self.kp_x, self.ki_x, self.kd_x = new_kp_x, new_ki_x, new_kd_x
+                self.pid_x.update_parameters(
+                    kp=self.kp_x, ki=self.ki_x, kd=self.kd_x,
+                    output_limits=(-new_max_vel_xy, new_max_vel_xy)
+                )
+                parameters_changed = True
+                rospy.loginfo(f"更新X轴PID参数: Kp={self.kp_x:.3f}, Ki={self.ki_x:.3f}, Kd={self.kd_x:.3f}")
+            
+            # 更新Y轴PID参数
+            if (new_kp_y != self.kp_y or new_ki_y != self.ki_y or new_kd_y != self.kd_y or
+                new_max_vel_xy != self.max_vel_xy):
+                self.kp_y, self.ki_y, self.kd_y = new_kp_y, new_ki_y, new_kd_y
+                self.pid_y.update_parameters(
+                    kp=self.kp_y, ki=self.ki_y, kd=self.kd_y,
+                    output_limits=(-new_max_vel_xy, new_max_vel_xy)
+                )
+                parameters_changed = True
+                rospy.loginfo(f"更新Y轴PID参数: Kp={self.kp_y:.3f}, Ki={self.ki_y:.3f}, Kd={self.kd_y:.3f}")
+            
+            # 更新Z轴PID参数
+            if (new_kp_z != self.kp_z or new_ki_z != self.ki_z or new_kd_z != self.kd_z or
+                new_max_vel_z != self.max_vel_z):
+                self.kp_z, self.ki_z, self.kd_z = new_kp_z, new_ki_z, new_kd_z
+                self.pid_z.update_parameters(
+                    kp=self.kp_z, ki=self.ki_z, kd=self.kd_z,
+                    output_limits=(-new_max_vel_z, new_max_vel_z)
+                )
+                parameters_changed = True
+                rospy.loginfo(f"更新Z轴PID参数: Kp={self.kp_z:.3f}, Ki={self.ki_z:.3f}, Kd={self.kd_z:.3f}")
+            
+            # 更新其他参数
+            if new_max_vel_xy != self.max_vel_xy:
+                self.max_vel_xy = new_max_vel_xy
+                parameters_changed = True
+                rospy.loginfo(f"更新最大XY速度: {self.max_vel_xy:.2f} m/s")
+                
+            if new_max_vel_z != self.max_vel_z:
+                self.max_vel_z = new_max_vel_z
+                parameters_changed = True
+                rospy.loginfo(f"更新最大Z速度: {self.max_vel_z:.2f} m/s")
+                
+            if new_landing_threshold != self.landing_threshold:
+                self.landing_threshold = new_landing_threshold
+                parameters_changed = True
+                rospy.loginfo(f"更新降落阈值: {self.landing_threshold} px")
+                
+            if new_min_altitude != self.min_altitude:
+                self.min_altitude = new_min_altitude
+                parameters_changed = True
+                rospy.loginfo(f"更新最小高度: {self.min_altitude:.2f} m")
+                
+            if new_descent_rate != self.descent_rate:
+                self.descent_rate = new_descent_rate
+                parameters_changed = True
+                rospy.loginfo(f"更新下降速率: {self.descent_rate:.2f} m/s")
+                
+            if new_target_timeout != self.target_timeout:
+                self.target_timeout = new_target_timeout
+                parameters_changed = True
+                rospy.loginfo(f"更新目标超时: {self.target_timeout:.2f} s")
+                
+        except Exception as e:
+            rospy.logwarn(f"参数更新过程中出现错误: {e}")
+
+    def manual_update_parameters(self):
+        """手动触发参数更新"""
+        rospy.loginfo("手动更新参数...")
+        self._update_parameters_callback(None)
+        self._print_current_parameters()
 
     def takeoff(self, altitude=20):
         """无人机起飞到指定高度"""
@@ -444,6 +629,9 @@ class MultirotorControl:
                         "landing_target_custom" - 自定义降落目标
         """
         print(f"开始视觉降落，目标类型: {target_type}")
+        
+        # 手动更新参数确保使用最新的PID配置
+        self.manual_update_parameters()
         
         # 设置目标话题订阅
         self._setup_visual_landing_subscriber(target_type)
