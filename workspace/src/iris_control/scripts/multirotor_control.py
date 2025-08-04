@@ -181,8 +181,6 @@ class MultirotorControl:
         self.camera_center_x = self.image_width / 2
         self.camera_center_y = self.image_height / 2
         
-<<<<<<< HEAD
-<<<<<<< HEAD
         # PID控制参数
         self.kp_x = 3.0      # X轴比例增益
         self.ki_x = 0.1      # X轴积分增益
@@ -203,35 +201,7 @@ class MultirotorControl:
         self.max_vel_xy = 1.5          # XY方向最大速度
         self.max_vel_z = 2.0           # Z方向最大速度
         self.target_timeout = 3.0      # 目标丢失超时时间(秒)
-=======
-        # PID控制参数 - 从ROS参数服务器获取，如果没有则使用默认值
-        self.kp_x = rospy.get_param('~pid_x/kp', 2.0)      # X轴比例增益
-        self.ki_x = rospy.get_param('~pid_x/ki', 0.0)      # X轴积分增益
-        self.kd_x = rospy.get_param('~pid_x/kd', 0.0)      # X轴微分增益
         
-        self.kp_y = rospy.get_param('~pid_y/kp', 2.0)      # Y轴比例增益
-        self.ki_y = rospy.get_param('~pid_y/ki', 0.0)      # Y轴积分增益
-        self.kd_y = rospy.get_param('~pid_y/kd', 0.0)      # Y轴微分增益
-        
-        self.kp_z = rospy.get_param('~pid_z/kp', 1.0)      # Z轴比例增益
-        self.ki_z = rospy.get_param('~pid_z/ki', 0.0)      # Z轴积分增益
-        self.kd_z = rospy.get_param('~pid_z/kd', 0.0)      # Z轴微分增益
-        
-=======
-        # PID控制参数 - 从ROS参数服务器获取，如果没有则使用默认值
-        self.kp_x = rospy.get_param('~pid_x/kp', 2.0)      # X轴比例增益
-        self.ki_x = rospy.get_param('~pid_x/ki', 0.0)      # X轴积分增益
-        self.kd_x = rospy.get_param('~pid_x/kd', 0.0)      # X轴微分增益
-        
-        self.kp_y = rospy.get_param('~pid_y/kp', 2.0)      # Y轴比例增益
-        self.ki_y = rospy.get_param('~pid_y/ki', 0.0)      # Y轴积分增益
-        self.kd_y = rospy.get_param('~pid_y/kd', 0.0)      # Y轴微分增益
-        
-        self.kp_z = rospy.get_param('~pid_z/kp', 1.0)      # Z轴比例增益
-        self.ki_z = rospy.get_param('~pid_z/ki', 0.0)      # Z轴积分增益
-        self.kd_z = rospy.get_param('~pid_z/kd', 0.0)      # Z轴微分增益
-        
->>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
         # 其他控制参数也从ROS参数服务器获取
         self.max_vel_xy = rospy.get_param('~max_vel_xy', 1.5)          # XY方向最大速度
         self.max_vel_z = rospy.get_param('~max_vel_z', 1.0)            # Z方向最大速度
@@ -239,10 +209,6 @@ class MultirotorControl:
         self.min_altitude = rospy.get_param('~min_altitude', 0.65)            # 最小安全高度
         self.descent_rate = rospy.get_param('~descent_rate', 0.25)            # 降落速率 m/s
         self.target_timeout = rospy.get_param('~target_timeout', 2.0)         # 目标丢失超时时间(秒)
-<<<<<<< HEAD
->>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
-=======
->>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
         
         # 视觉降落状态变量
         self.target_detected = False
@@ -279,6 +245,10 @@ class MultirotorControl:
         # 视觉降落相关话题订阅器
         self.target_sub = None
         self.landing_enabled = False
+        
+        # 位姿发布器 - 用于在降落完成后发布无人机位姿
+        self.bad_man_pose_pub = rospy.Publisher('/zhihang2025/iris_bad_man/pose', Pose, queue_size=1)
+        self.healthy_man_pose_pub = rospy.Publisher('/zhihang2025/iris_healthy_man/pose', Pose, queue_size=1)
         
         # 参数更新定时器 - 每0.5秒检查一次参数更新
         self.param_update_timer = rospy.Timer(rospy.Duration(0.5), self._update_parameters_callback)
@@ -686,7 +656,13 @@ class MultirotorControl:
             self.target_sub.unregister()
             self.target_sub = None
         
-        return self.current_landing_state == self.LANDING_STATES['LANDED']
+        # 检查是否成功降落，如果成功则发布位姿信息
+        landing_success = self.current_landing_state == self.LANDING_STATES['LANDED']
+        if landing_success:
+            print("视觉降落成功，发布位姿信息...")
+            self._publish_landing_pose(target_type)
+        
+        return landing_success
     
     def _setup_visual_landing_subscriber(self, target_type):
         """设置视觉降落目标话题订阅器"""
@@ -715,6 +691,39 @@ class MultirotorControl:
         self.pid_z.reset()
         print("视觉降落状态已重置")
     
+    def _publish_landing_pose(self, target_type):
+        """根据目标类型发布降落完成后的位姿信息"""
+        try:
+            # 获取当前位姿信息
+            pose_info, _ = self.controller.get_current_position()
+            if pose_info is None:
+                print("无法获取当前位姿信息，无法发布位姿")
+                return False
+            
+            # 创建Pose消息
+            pose_msg = Pose()
+            pose_msg.position = pose_info.pose.position
+            pose_msg.orientation = pose_info.pose.orientation
+            
+            # 根据目标类型选择发布话题
+            if target_type == "landing_target_red":
+                self.bad_man_pose_pub.publish(pose_msg)
+                print(f"已发布危重病人位姿到 /zhihang2025/iris_bad_man/pose")
+                print(f"位置: x={pose_msg.position.x:.3f}, y={pose_msg.position.y:.3f}, z={pose_msg.position.z:.3f}")
+            elif target_type == "landing_target_camo":
+                self.healthy_man_pose_pub.publish(pose_msg)
+                print(f"已发布健康人员位姿到 /zhihang2025/iris_healthy_man/pose")
+                print(f"位置: x={pose_msg.position.x:.3f}, y={pose_msg.position.y:.3f}, z={pose_msg.position.z:.3f}")
+            else:
+                print(f"未知的目标类型 {target_type}，不发布位姿信息")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"发布位姿信息时出现错误: {e}")
+            return False
+
     def _calculate_pixel_error(self):
         """计算像素误差"""
         if not self.target_detected:
@@ -817,7 +826,7 @@ class MultirotorControl:
                 print(f"跟踪调整: vx={vel_x:.3f}, vy={vel_y:.3f}, 误差: x={error_x:.1f}px, y={error_y:.1f}px")
                 
                 # 判断是否可以开始下降
-                if error_distance < self.landing_threshold and current_altitude > self.min_altitude:
+                if error_distance < self.landing_threshold and current_altitude > 0.65:
                     self.current_landing_state = self.LANDING_STATES['DESCENDING']
                     print("目标居中，开始下降")
                     
@@ -842,7 +851,7 @@ class MultirotorControl:
                 vel_y *= 0.6
                 
                 # 使用PID控制器控制下降速度
-                target_altitude = max(self.min_altitude, current_altitude - 0.1)
+                target_altitude = max(0.65, current_altitude - 0.1)
                 vel_z = self._altitude_to_velocity_pid(target_altitude)
                 
                 # 限制下降速度
@@ -855,24 +864,26 @@ class MultirotorControl:
                 
                 print(f"下降调整: vx={vel_x:.3f}, vy={vel_y:.3f}, vz={vel_z:.3f}")
                 
-                # 判断是否需要最终降落
-                if current_altitude <= self.min_altitude:
-                    self.current_landing_state = self.LANDING_STATES['LANDING']
-                    print("到达最小安全高度，执行最终降落")
+                # 判断是否已经降落到目标高度（0.65米）
+                if current_altitude <= 0.65:
+                    # 停止所有运动
+                    self.controller.current_twist.linear.x = 0.0
+                    self.controller.current_twist.linear.y = 0.0
+                    self.controller.current_twist.linear.z = 0.0
+                    self.controller.set_hover_mode()
+                    
+                    self.current_landing_state = self.LANDING_STATES['LANDED']
+                    print(f"已降落到目标高度 {current_altitude:.2f}m，视觉降落完成")
                     
         elif self.current_landing_state == self.LANDING_STATES['LANDING']:
+            # 这个状态现在基本不会用到，因为直接从DESCENDING跳到LANDED
             print("执行最终降落")
             
             # 停止所有运动
             self.controller.current_twist.linear.x = 0.0
             self.controller.current_twist.linear.y = 0.0
             self.controller.current_twist.linear.z = 0.0
-            
-            # 执行自动降落序列
-            self.controller.auto_landing_sequence()
-            
-            # 等待降落完成
-            time.sleep(2.0)
+            self.controller.set_hover_mode()
             
             self.current_landing_state = self.LANDING_STATES['LANDED']
             print("降落完成")

@@ -32,6 +32,7 @@ class VTOLROSCommunicator:
         # Condition状态管理
         self.current_condition = 0xAA  # 初始化为0xAA
         self.last_sent_condition = None
+        self.condition_timer = None  # 定时器用于定期发布condition
         
         # 回调函数
         self.position_callback = None
@@ -75,6 +76,9 @@ class VTOLROSCommunicator:
         # 发送初始condition状态
         self.publish_condition(self.current_condition)
         
+        # 启动20Hz定时器，持续发布condition状态
+        self.start_condition_timer()
+        
         print("ROS通信初始化完成")
 
     def _local_pose_callback(self, msg):
@@ -99,13 +103,36 @@ class VTOLROSCommunicator:
         self.condition_callback = callback_func
 
     def publish_condition(self, condition_value):
-        """发布condition状态"""
-        if condition_value != self.last_sent_condition:
+        """更新并发布condition状态"""
+        self.current_condition = condition_value
+        # 不再直接发布，而是通过定时器统一发布
+
+    def _publish_condition_timer_callback(self, event):
+        """定时器回调函数，20Hz发布当前condition状态"""
+        if self.condition_pub is not None:
             msg = Int8()
-            msg.data = condition_value
+            msg.data = self.current_condition
             self.condition_pub.publish(msg)
-            self.last_sent_condition = condition_value
-            print(f"发送Condition: 0x{condition_value:02X}")
+            # 只在condition改变时打印，避免过多输出
+            if self.current_condition != self.last_sent_condition:
+                print(f"发送Condition: 0x{self.current_condition:02X} (持续20Hz发布)")
+                self.last_sent_condition = self.current_condition
+
+    def start_condition_timer(self):
+        """启动20Hz condition发布定时器"""
+        if self.condition_timer is None:
+            self.condition_timer = rospy.Timer(
+                rospy.Duration(0.05),  # 20Hz = 1/0.05s
+                self._publish_condition_timer_callback
+            )
+            print("✅ 启动20Hz Condition定时发布器")
+
+    def stop_condition_timer(self):
+        """停止condition定时发布"""
+        if self.condition_timer is not None:
+            self.condition_timer.shutdown()
+            self.condition_timer = None
+            print("停止Condition定时发布器")
 
     def send_command(self, cmd_str):
         """发送xtdrone命令"""
@@ -201,6 +228,7 @@ class VTOLROSCommunicator:
     def shutdown(self):
         """关闭ROS通信"""
         self.stop_publishing()
+        self.stop_condition_timer()
         print("ROS通信器关闭")
 
 
