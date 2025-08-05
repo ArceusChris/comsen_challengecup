@@ -249,41 +249,12 @@ class RedPatternDetector:
                 if source == 'yolo11':
                     rospy.loginfo(f"Red platform detected via YOLO11 backup at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
                     rospy.loginfo(f"Red platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
             else:
                 if self.should_use_yolo_backup():
                     rospy.logwarn("No red platform detected by either CV (timeout) or YOLO11 backup")
                 else:
                     rospy.logdebug("No red platform detected by CV (within timeout)")
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> origin/fix/iris_landing
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> origin/fix/iris_landing
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> origin/fix/iris_landing
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> origin/fix/iris_landing
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> origin/fix/iris_landing
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
-=======
-                    rospy.loginfo(f"Red platform detected at {candidate['center']} with score {candidate['total_score']:.2f}")
->>>>>>> a9652ffa5c8f310af217ce641e9e443ee249f52c
-            
             # 发布调试图像
             debug_image = self.draw_debug_info(cv_image, candidate, red_mask)
             debug_msg = self.bridge.cv2_to_imgmsg(debug_image, "bgr8")
