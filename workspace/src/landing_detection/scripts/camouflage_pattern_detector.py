@@ -70,61 +70,54 @@ class CamouflagePatternDetector:
     
     def detect_camouflage_circle(self, image):
         """
-        检测迷彩圆形 - 基于边缘和纹理特征
+        检测迷彩圆形 - 基于霍夫圆检测
         """
-        gray, enhanced, blurred = self.preprocess_image(image)
+        # 1. 将图像转为灰度图
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         
-        # 边缘检测
-        edges = cv2.Canny(blurred, self.edge_threshold, self.edge_threshold * 2)
+        # 2. 进行直方图均衡化处理
+        equalized = cv2.equalizeHist(gray)
         
-        # 形态学操作连接断裂的边缘
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        # 3. 使用形态学操作连接断开的边界
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        morph = cv2.morphologyEx(equalized, cv2.MORPH_CLOSE, kernel)
         
-        # 霍夫圆变换检测圆形
+        # 4. 运行霍夫圆检测
         circles = cv2.HoughCircles(
-            edges,
+            morph,
             cv2.HOUGH_GRADIENT,
             dp=1,
             minDist=80,
-            param1=50,
-            param2=30,
+            param1=100,
+            param2=100,
             minRadius=self.min_circle_radius,
             maxRadius=self.max_circle_radius
         )
         
-        candidates = []
-        
+        # 5. 找到最大的圆
         if circles is not None:
             circles = np.round(circles[0, :]).astype("int")
             
+            # 找到半径最大的圆
+            max_radius = 0
+            best_circle = None
+            
             for (x, y, r) in circles:
-                # 验证迷彩纹理特征
-                texture_score = self.analyze_camouflage_texture(enhanced, x, y, r)
-                
-                # 检测内部白色圆圈
-                white_circle_score = self.detect_inner_white_circle(image, x, y, r)
-                
-                # 检测十字标记
-                cross_score = self.detect_cross_in_center(image, x, y, r)
-                
-                # 综合评分
-                total_score = texture_score * 0.4 + white_circle_score * 0.3 + cross_score * 0.3
-                
-                if total_score > 0.5:  # 阈值可调
-                    candidates.append({
-                        'center': (x, y),
-                        'radius': r,
-                        'texture_score': texture_score,
-                        'white_score': white_circle_score,
-                        'cross_score': cross_score,
-                        'total_score': total_score
-                    })
-        
-        # 返回得分最高的候选
-        if candidates:
-            best_candidate = max(candidates, key=lambda x: x['total_score'])
-            return best_candidate
+                if r > max_radius:
+                    max_radius = r
+                    best_circle = (x, y, r)
+            
+            if best_circle:
+                x, y, r = best_circle
+                # 返回最大圆的信息
+                return {
+                    'center': (x, y),
+                    'radius': r,
+                    'texture_score': 1.0,  # 简化评分
+                    'white_score': 1.0,
+                    'cross_score': 1.0,
+                    'total_score': 1.0
+                }
         
         return None
     
