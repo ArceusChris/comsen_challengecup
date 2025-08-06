@@ -136,7 +136,7 @@ class VTOLDemoFlight:
         for attempt in range(max_retries):
             print(f"尝试获取位置信息 (第{attempt+1}次/共{max_retries}次)...")
             
-            if self.flight_controller.wait_for_position(timeout=5):
+            if self.flight_controller.wait_for_position():
                 current_pos = self.current_position
                 if current_pos:
                     print(f"✅ 成功获取位置: ({current_pos.x:.1f}, {current_pos.y:.1f}, {current_pos.z:.1f})")
@@ -187,12 +187,37 @@ class VTOLDemoFlight:
         """紧急停止"""
         self.flight_controller.emergency_stop()
 
+    def _maintain_position_stability(self, duration_seconds):
+        """在指定时间内持续发布当前位置以保持稳定 - 0.1秒快速响应"""
+        if self.flight_controller and self.flight_controller.current_position:
+            current_pos = self.flight_controller.current_position
+            
+            # 使用当前位置，确保高度安全
+            x = current_pos.x
+            y = current_pos.y
+            z = max(current_pos.z, 20.0)  # 确保最低20米高度
+            
+            # 持续发布控制指令，0.1秒间隔
+            iterations = int(duration_seconds * 10)  # 每0.1秒发布一次
+            for _ in range(iterations):
+                self.flight_controller.set_target_pose(x, y, z)
+                time.sleep(0.1)  # 0.1秒快速响应
+        else:
+            # 如果无法获取位置，使用简单等待
+            time.sleep(duration_seconds)
+
     # 任务管理和流程控制
     def run_mission(self):
-        """执行完整任务"""
-        print(f"\n🎯 开始执行VTOL自动飞行任务")
+        """执行完整任务 - 新的任务流程"""
+        print(f"\n🎯 开始执行VTOL自动飞行任务 (新任务流程)")
         print("="*60)
-        print(f"任务概述: {len(self.targets)} 个目标点")
+        print("任务概览:")
+        print("1. 旋翼模式起飞到40米高度")
+        print("2. 固定翼模式飞向目标点1 (1495, 250, 40)")
+        print("3. 飞向目标点2 (1495, -250, 40)")
+        print("4. 依次飞向三个人员位置 (高度20米)")
+        print("5. 返回旋翼区并自动返航")
+        print("="*60)
         
         try:
             # 1. 初始化和连接检查
@@ -201,72 +226,55 @@ class VTOLDemoFlight:
                 print("❌ 初始化失败，任务终止")
                 return False
             
-            # 2. 起飞前状态检查
-            print("\n📋 步骤2: 起飞前检查...")
-            current_pos = self.current_position
-            if current_pos:
-                print(f"起飞前位置: ({current_pos.x:.1f}, {current_pos.y:.1f}, {current_pos.z:.1f})")
-            else:
-                print("⚠️ 无法获取起飞前位置，使用默认值")
-            
-            # 3. 起飞
-            print("\n📋 步骤3: 执行起飞...")
-            if not self.takeoff_sequence():
-                print("❌ 起飞失败，任务终止")
+            # 2. 任务1: 旋翼模式起飞到40米
+            print("\n📋 任务1: 旋翼模式起飞到40米...")
+            if not self.flight_controller.takeoff_sequence():
+                print("❌ 任务1失败")
                 return False
+            print("✅ 任务1完成")
+            self.publish_condition(0x01)  # 发布状态0x01
+            self._maintain_position_stability(2)
             
-            print("✅ 起飞成功，开始访问目标点")
+            # 3. 任务2: 固定翼模式飞向目标点1
+            print("\n📋 任务2: 固定翼模式飞向目标点1...")
+            if not self.flight_controller.fly_to_target_1():
+                print("❌ 任务2失败")
+                return False
+            print("✅ 任务2完成")
+            self.publish_condition(0x02)  # 发布状态0x02
+            self._maintain_position_stability(2)
             
-            # 4. 访问每个目标点
-            success_count = 0
-            for i, target in enumerate(self.targets):
-                if i == 0:  # 跳过起飞点
-                    print(f"\n🎯 目标点 {i+1}/{len(self.targets)}: {target['name']} (起飞点，跳过)")
-                    self.update_mission_condition(i)
-                    success_count += 1
-                    continue
-                
-                self.current_target_index = i
-                
-                print(f"\n🎯 目标点 {i+1}/{len(self.targets)}: {target['name']}")
-                print("-" * 50)
-                
-                x, y, z = target['position']
-                
-                # 安全检查
-                is_safe, safety_msg = self.check_flight_safety(x, y, z)
-                if not is_safe:
-                    print(f"❌ 跳过不安全的目标点: {safety_msg}")
-                    continue
-                
-                # 飞向目标点
-                print(f"飞向目标: ({x}, {y}, {z})")
-                if self.fly_to_target(x, y, z):
-                    print(f"✅ 成功到达目标点 {target['name']}")
-                    
-                    # 发布condition
-                    self.update_mission_condition(i)
-                    
-                    # 如果是最后一个目标且高度较低，尝试降落
-                    if i == len(self.targets) - 1 and z <= 5.0:
-                        print(f"最后目标点且高度较低，尝试降落...")
-                        self.land_at_target(x, y, z)
-                    
-                    success_count += 1
-                    time.sleep(3)  # 在目标点停留
-                else:
-                    print(f"❌ 未能到达目标点 {target['name']}")
+            # 4. 任务3: 飞向目标点2，并在此处更新一次人员位置
+            print("\n📋 任务3: 飞向目标点2...")
+            if not self.flight_controller.fly_to_target_2():
+                print("❌ 任务3失败")
+                return False
+            print("✅ 任务3完成")
+            self.publish_condition(0x03)  # 发布状态0x03
             
-            # 5. 返航
-            print(f"\n🏠 所有目标点访问完成 ({success_count}/{len(self.targets)})，开始返航...")
-            if self.return_to_launch():
-                print("✅ 返航成功")
-            else:
-                print("⚠️ 返航完成（可能有异常）")
+            # 关键：只在此处更新一次人员位置
+            print("\n🔄 更新人员位置信息...")
+            self.flight_controller.person_reader.update_positions_once()
+            self._maintain_position_stability(2)
             
-            # 6. 任务总结
-            self.print_mission_summary(success_count)
+            # 5. 任务4: 依次飞向人员位置
+            print("\n📋 任务4: 依次飞向人员位置...")
+            if not self.flight_controller.visit_persons():
+                print("❌ 任务4失败")
+                return False
+            print("✅ 任务4完成")
+            self.publish_condition(0x04)  # 发布状态0x04
+            self._maintain_position_stability(2)
             
+            # 6. 任务5: 返回旋翼区并自动返航
+            print("\n📋 任务5: 返回旋翼区并自动返航...")
+            if not self.flight_controller.return_to_multirotor_zone():
+                print("❌ 任务5失败")
+                return False
+            print("✅ 任务5完成")
+            self.publish_condition(0x05)  # 发布状态0x05
+            
+            print("\n🎉 所有任务完成！")
             return True
             
         except KeyboardInterrupt:

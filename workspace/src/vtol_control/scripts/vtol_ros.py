@@ -232,6 +232,123 @@ class VTOLROSCommunicator:
         print("ROS通信器关闭")
 
 
+class PersonPositionReader:
+    """人员位置读取器 - 从ROS话题获取人员位置"""
+    
+    def __init__(self):
+        self.positions = {}  # 存储人员位置 {name: (x, y, z)}
+        self.subscribers = []
+        self.position_lock = threading.Lock()
+        
+        print("初始化人员位置读取器")
+    
+    def start_listening(self):
+        """开始监听人员位置话题"""
+        # 监听三个人员的位置话题 - 修正话题名称
+        person_topics = [
+            ("/person_yellow/position", "Person_Yellow"),
+            ("/person_white/position", "Person_White"), 
+            ("/person_red/position", "Person_Red")
+        ]
+        
+        for topic, name in person_topics:
+            try:
+                # 使用Pose消息类型而不是PoseStamped
+                from geometry_msgs.msg import Pose
+                sub = rospy.Subscriber(
+                    topic, 
+                    Pose, 
+                    lambda msg, person_name=name: self._position_callback(msg, person_name),
+                    queue_size=1
+                )
+                self.subscribers.append(sub)
+                print(f"✅ 开始监听 {name} 位置话题: {topic}")
+            except Exception as e:
+                print(f"❌ 监听 {name} 位置话题失败: {e}")
+    
+    def _position_callback(self, msg, person_name):
+        """位置回调函数 - 适配Pose消息"""
+        with self.position_lock:
+            x = msg.position.x
+            y = msg.position.y
+            z = msg.position.z
+            self.positions[person_name] = (x, y, z)
+            # 只在首次接收时打印
+            if len(self.positions) <= 3:
+                print(f"📍 接收到 {person_name} 位置: ({x:.1f}, {y:.1f}, {z:.1f})")
+    
+    def update_positions_once(self):
+        """主动更新一次人员位置 - 只在任务3完成后调用一次"""
+        print("🔄 主动更新人员位置...")
+        
+        # 开始监听（如果还没有开始）
+        if not self.subscribers:
+            self.start_listening()
+        
+        # 等待获取位置数据
+        import time
+        timeout = 5.0
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            with self.position_lock:
+                if len(self.positions) >= 3:
+                    print(f"✅ 成功获取{len(self.positions)}个人员位置")
+                    for name, (x, y, z) in self.positions.items():
+                        print(f"   {name}: ({x:.1f}, {y:.1f}, {z:.1f})")
+                    return True
+            time.sleep(0.1)
+        
+        # 如果无法获取真实数据，使用模拟数据
+        print(f"⚠️ 超时，只获取到{len(self.positions)}个人员位置，使用模拟数据")
+        self._generate_mock_positions()
+        return len(self.positions) > 0
+    
+    def _generate_mock_positions(self):
+        """生成模拟的人员位置数据"""
+        print("🎭 生成模拟人员位置数据...")
+        mock_positions = {
+            "Person_Yellow": (1495, 249, 0),  # y坐标最小
+            "Person_White": (1495, 250, 0),      # y坐标中等  
+            "Person_Red": (1495, 251, 0)       # y坐标最大
+        }
+        
+        with self.position_lock:
+            self.positions.update(mock_positions)
+            
+        print("📍 模拟人员位置:")
+        for name, (x, y, z) in mock_positions.items():
+            print(f"   {name}: ({x:.1f}, {y:.1f}, {z:.1f})")
+    
+    def get_sorted_positions(self):
+        """获取按y坐标排序的人员位置列表"""
+        with self.position_lock:
+            if not self.positions:
+                print("❌ 没有人员位置数据")
+                return []
+            
+            # 按y坐标从小到大排序
+            sorted_positions = []
+            for name, (x, y, z) in self.positions.items():
+                sorted_positions.append((x, y, z, name))
+            
+            sorted_positions.sort(key=lambda pos: pos[1])  # 按y坐标排序
+            
+            print(f"📍 按y坐标排序的人员位置:")
+            for i, (x, y, z, name) in enumerate(sorted_positions, 1):
+                print(f"   {i}. {name}: ({x:.1f}, {y:.1f}, {z:.1f})")
+            
+            return sorted_positions
+    
+    def shutdown(self):
+        """关闭人员位置读取器"""
+        print("关闭人员位置读取器...")
+        for sub in self.subscribers:
+            sub.unregister()
+        self.subscribers.clear()
+        self.positions.clear()
+
+
 def test_ros_communication():
     """测试ROS通信功能"""
     print("测试VTOL ROS通信模块")

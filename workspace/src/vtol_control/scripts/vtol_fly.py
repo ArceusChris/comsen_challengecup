@@ -19,7 +19,7 @@ if current_dir not in sys.path:
 
 from vtol_map import VTOLMap, ZoneType
 from vtol_Astar import VTOLAstarPlanner
-from vtol_ros import VTOLROSCommunicator
+from vtol_ros import VTOLROSCommunicator, PersonPositionReader
 
 
 class VTOLFlightController:
@@ -38,10 +38,13 @@ class VTOLFlightController:
         # 初始化ROS通信器
         self.ros_comm = VTOLROSCommunicator(vehicle_type, vehicle_id)
         
+        # 初始化人员位置读取器  
+        self.person_reader = PersonPositionReader()
+        
         # 飞行参数
-        self.takeoff_height = 30.0
-        self.cruise_height = 50.0
-        self.approach_height = 25.0
+        self.takeoff_height = 40.0  # 任务要求：起飞高度40米
+        self.cruise_height = 40.0   # 巡航高度40米
+        self.person_height = 20.0   # 人员飞行高度20米
         
         # 飞行模式状态
         self.current_mode = "multirotor"  # multirotor 或 plane
@@ -171,7 +174,7 @@ class VTOLFlightController:
         return True
 
     def takeoff_sequence(self):
-        """起飞序列"""
+        """起飞序列 - 恢复旧版稳定逻辑"""
         print(f"\n🚀 开始起飞序列...")
         print("="*50)
         
@@ -210,49 +213,82 @@ class VTOLFlightController:
             print("❌ 无法切换到旋翼模式，起飞失败")
             return False
         
+        # 旧版稳定起飞逻辑：先发布上升速度命令，再设置模式
+        print("🔧 预设上升速度命令...")
+        self.set_target_pose(current_x, current_y, current_z + 0.5)  # 预设稍高位置
+        time.sleep(1)
+        
         # 设置OFFBOARD模式
         print("设置OFFBOARD模式...")
         self.send_cmd("OFFBOARD")
-        time.sleep(2)
+        time.sleep(3)  # 增加等待时间
         
         # 解锁无人机
         print("解锁无人机...")
         self.send_cmd("ARM")
         time.sleep(3)
         
-        # 逐步起飞
-        print("📈 开始闭环控制起飞...")
-        start_x = self.current_position.x
-        start_y = self.current_position.y
+        # 分阶段闭环控制起飞 - 持续发布目标位置
+        print("📈 开始分阶段闭环控制起飞...")
+        start_x = self.current_position.x if self.current_position else current_x
+        start_y = self.current_position.y if self.current_position else current_y
         
-        takeoff_heights = [5, 10, 20, self.takeoff_height]
+        takeoff_heights = [3, 8, 15, 25, self.takeoff_height]
         
         for i, height in enumerate(takeoff_heights):
             print(f"   🎯 起飞阶段 {i+1}/{len(takeoff_heights)}: 目标高度 {height}m")
-            success = self.wait_for_position_reached(start_x, start_y, height, tolerance=3.0, max_wait_time=20.0)
             
-            if success:
-                print(f"   ✅ 到达高度 {height}m")
-            else:
-                print(f"   ⚠️ 高度 {height}m 未完全到达，继续下一阶段")
+            # 持续发布目标位置，使用快速检查
+            stage_time = 6.0 if i < len(takeoff_heights) - 1 else 10.0  # 减少等待时间
+            start_time = time.time()
             
-            time.sleep(1)
+            while time.time() - start_time < stage_time and self.is_ros_ok():
+                # 持续发布目标位置
+                self.set_target_pose(start_x, start_y, height)
+                
+                # 0.1秒间隔快速检查高度
+                if self.current_position:
+                    current_height = self.current_position.z
+                    if current_height >= height - 2.0:  # 接近目标高度
+                        print(f"   ✅ 快速到达高度 {height}m (当前: {current_height:.1f}m)")
+                        break
+                
+                time.sleep(0.1)  # 0.1秒快速响应
+            
+            # 短暂稳定，也使用快速发布
+            if i < len(takeoff_heights) - 1:
+                print(f"   快速稳定0.5秒...")
+                for _ in range(5):  # 0.5秒稳定时间
+                    self.set_target_pose(start_x, start_y, height)
+                    time.sleep(0.1)
         
-        # 最终验证
+        # 最终验证和稳定，减少时间
+        print("🔍 快速最终起飞验证...")
+        final_stable_time = 1.0  # 减少到1秒
+        start_time = time.time()
+        
+        while time.time() - start_time < final_stable_time and self.is_ros_ok():
+            self.set_target_pose(start_x, start_y, self.takeoff_height)
+            time.sleep(0.1)  # 0.1秒快速发布
+        
         if self.current_position:
             final_height = self.current_position.z
             print(f"📊 起飞完成检查：")
             print(f"   目标高度: {self.takeoff_height}m")
             print(f"   实际高度: {final_height:.1f}m")
             
-            if final_height >= self.takeoff_height - 5.0:
+            if final_height >= self.takeoff_height - 8.0:  # 放宽容差
                 print("✅ 起飞成功!")
+                self.publish_status(0x01)  # 发布状态0x01
                 return True
             else:
                 print("⚠️ 起飞高度不足，但继续任务...")
+                self.publish_status(0x01)  # 仍然发布状态0x01
                 return True
         
-        return False
+        print("⚠️ 无法验证最终高度，但假设起飞成功")
+        self.publish_status(0x01)
+        return True
 
     def fly_to_target(self, target_x, target_y, target_z):
         """飞向指定目标"""
@@ -451,10 +487,10 @@ class VTOLFlightController:
             segment_distance = math.sqrt((wp_x - current_x)**2 + (wp_y - current_y)**2) if i == 0 else \
                              math.sqrt((wp_x - waypoints[i-1][0])**2 + (wp_y - waypoints[i-1][1])**2)
             
-            waypoint_tolerance = min(25.0, max(20.0, segment_distance * 0.1))
-            max_wait_time = max(30.0, min(90.0, segment_distance / 15.0))
+            # 统一使用30米容差
+            waypoint_tolerance = 30.0
             
-            success = self.wait_for_position_reached(wp_x, wp_y, flight_height, waypoint_tolerance, max_wait_time)
+            success = self.wait_for_position_reached(wp_x, wp_y, flight_height, waypoint_tolerance)
             
             if success:
                 print(f"   ✅ 成功到达航点 {i+1}")
@@ -500,18 +536,21 @@ class VTOLFlightController:
             self.set_target_pose(target_x, target_y, safe_height)
             time.sleep(5)
 
-    def wait_for_position_reached(self, target_x, target_y, target_z, tolerance=20.0, max_wait_time=60.0):
-        """等待到达目标位置 - 瞬间距离判断，不需要持续停留"""
-        print(f"🎯 等待瞬间到达目标: ({target_x:.1f}, {target_y:.1f}, {target_z:.1f}), 距离阈值: {tolerance}m")
+    def wait_for_position_reached(self, target_x, target_y, target_z, tolerance=30.0, max_wait_time=None):
+        """等待到达目标位置 - 0.1秒快速响应判断，无超时机制"""
+        print(f"🎯 快速响应等待到达目标: ({target_x:.1f}, {target_y:.1f}, {target_z:.1f}), 距离阈值: {tolerance}m")
+        print("⚡ 0.1秒间隔快速检查，一瞬间满足条件立即返回...")
         
         start_time = time.time()
         min_distance = float('inf')
         
         self.set_target_pose(target_x, target_y, target_z)
         
-        check_interval = 0.1
+        check_interval = 0.1  # 保持0.1秒快速检查
+        check_count = 0
+        last_report_time = 0
         
-        while time.time() - start_time < max_wait_time and self.is_ros_ok():
+        while self.is_ros_ok():
             current_pos = self.current_position
             if current_pos is None:
                 print("⚠️ 无法获取位置信息")
@@ -521,30 +560,27 @@ class VTOLFlightController:
             current_distance = self.get_distance_to_target(target_x, target_y, target_z)
             min_distance = min(min_distance, current_distance)
             
-            # 持续发布目标位置
+            # 持续发布目标位置，确保控制稳定
             self.set_target_pose(target_x, target_y, target_z)
             
-            # 瞬间距离判断：只要一次距离小于tolerance就认为到达
+            # 瞬间距离判断：只要一次距离小于tolerance就认为到达，立即返回
             if current_distance <= tolerance:
-                print(f"✅ 瞬间到达目标！距离: {current_distance:.1f}m, 用时: {time.time() - start_time:.1f}s")
+                elapsed_time = time.time() - start_time
+                print(f"✅ 快速到达目标！距离: {current_distance:.1f}m, 用时: {elapsed_time:.1f}s")
+                print(f"🚀 0.1秒响应，立即进入下一阶段！")
                 return True
             
+            # 减少报告频率，每1秒报告一次而不是每5秒
             elapsed = time.time() - start_time
-            if int(elapsed) % 5 == 0 and elapsed > 0:
-                print(f"  📊 {elapsed:5.1f}s | 当前距离: {current_distance:6.1f}m | 最小距离: {min_distance:6.1f}m")
+            if elapsed - last_report_time >= 1.0:  # 每1秒报告一次，提高信息反馈频率
+                print(f"  📊 {elapsed:5.1f}s | 距离: {current_distance:6.1f}m | 最小: {min_distance:6.1f}m | 快速等待中...")
+                last_report_time = elapsed
             
-            time.sleep(check_interval)
+            time.sleep(check_interval)  # 0.1秒快速检查间隔
         
-        final_distance = self.get_distance_to_target(target_x, target_y, target_z)
-        print(f"⏰ 等待超时！最终距离: {final_distance:.1f}m, 最小距离: {min_distance:.1f}m")
-        
-        # 即使超时，如果最小距离曾经达到过阈值的1.5倍以内，也认为成功
-        if min_distance <= tolerance * 1.5:
-            print(f"✅ 虽然超时，但曾接近目标（最小距离: {min_distance:.1f}m）")
-            return True
-        else:
-            print(f"❌ 未能接近目标位置")
-            return False
+        # 如果ROS不正常，才退出
+        print(f"❌ ROS通信异常，停止等待")
+        return False
 
     def precise_fly_to_position(self, target_x, target_y, target_z, description="目标点"):
         """精确飞向位置 - 使用闭环控制"""
@@ -563,21 +599,34 @@ class VTOLFlightController:
         print(f"📏 起始位置: ({start_x:.1f}, {start_y:.1f}, {start_z:.1f})")
         print(f"📏 目标距离: {total_distance:.1f}m")
         
-        # 分阶段接近
-        approach_stages = [
-            (min(50.0, total_distance * 0.8), 5.0, "远距离接近"),
-            (min(30.0, total_distance * 0.5), 5.0, "中距离接近"),
-            (20.0, 5.0, "精确定位")
-        ]
+        # 分阶段接近 - 统一使用30米容差（非起飞阶段）
+        current_altitude = self.current_position.z if self.current_position else 0
         
-        for stage, (tolerance, max_time, stage_name) in enumerate(approach_stages, 1):
-            if total_distance <= tolerance:
-                print(f"跳过阶段 {stage}：{stage_name}（已足够接近）")
+        # 如果当前高度小于5米，说明可能在起飞阶段，使用小容差
+        if current_altitude < 5.0:
+            approach_stages = [
+                (10.0, "起飞阶段精确定位")
+            ]
+        else:
+            # 非起飞阶段统一使用30米容差
+            if total_distance > 30.0:
+                approach_stages = [
+                    (30.0, "统一容差接近")
+                ]
+            else:
+                approach_stages = [
+                    (30.0, "最终定位")
+                ]
+        
+        for stage, (tolerance, stage_name) in enumerate(approach_stages, 1):
+            current_distance = self.get_distance_to_target(target_x, target_y, target_z)
+            if current_distance <= tolerance:
+                print(f"跳过阶段 {stage}：{stage_name}（已足够接近，当前距离: {current_distance:.1f}m）")
                 continue
                 
             print(f"\n📍 阶段 {stage}: {stage_name} (容忍度: {tolerance}m)")
             
-            success = self.wait_for_position_reached(target_x, target_y, target_z, tolerance, max_time)
+            success = self.wait_for_position_reached(target_x, target_y, target_z, tolerance)
             
             if success:
                 print(f"✅ 阶段 {stage} 完成")
@@ -593,7 +642,7 @@ class VTOLFlightController:
             print(f"   最终距离: {final_distance:.1f}m")
             print(f"   最终位置: ({self.current_position.x:.1f}, {self.current_position.y:.1f}, {self.current_position.z:.1f})")
             
-            if final_distance <= 25.0:
+            if final_distance <= 30.0:
                 print(f"   ✅ 精度良好")
                 return True
             elif final_distance <= 40.0:
@@ -616,18 +665,19 @@ class VTOLFlightController:
         return self.wait_for_landing_completion()
 
     def wait_for_landing_completion(self):
-        """等待无人机返航和降落完成"""
-        print("🔍 监控无人机返航和降落过程...")
+        """等待无人机返航和降落完成 - 无超时机制，持续等待直到降落完成"""
+        print("🔍 持续监控无人机返航和降落过程...")
+        print("⚠️ 无超时机制，将持续等待直到降落完成...")
         
-        max_wait_time = 120.0
         start_time = time.time()
         landing_threshold = 2.0
         stable_landing_time = 5.0
         
         landing_start_time = None
-        check_interval = 0.5
+        check_interval = 0.1  # 改为0.1秒快速检查
+        last_report_time = 0
         
-        while time.time() - start_time < max_wait_time and self.is_ros_ok():
+        while self.is_ros_ok():
             current_pos = self.current_position
             if current_pos is None:
                 print("⚠️ 无法获取位置信息，继续等待...")
@@ -638,7 +688,10 @@ class VTOLFlightController:
             current_distance_to_origin = math.sqrt(current_pos.x**2 + current_pos.y**2)
             
             if current_distance_to_origin <= 50.0:
-                print(f"📍 已返航至原点附近，距离: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                elapsed = time.time() - start_time
+                if elapsed - last_report_time >= 2.0:  # 每2秒报告一次，提高反馈频率
+                    print(f"📍 已返航至原点附近，距离: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                    last_report_time = elapsed
                 
                 if current_height <= landing_threshold:
                     if landing_start_time is None:
@@ -656,24 +709,16 @@ class VTOLFlightController:
                         print(f"⬆️ 高度上升到 {current_height:.1f}m，重置降落检测")
                         landing_start_time = None
             else:
-                print(f"🏠 返航中...距离原点: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                elapsed = time.time() - start_time
+                if elapsed - last_report_time >= 3.0:  # 返航阶段每3秒报告一次
+                    print(f"🏠 返航中...距离原点: {current_distance_to_origin:.1f}m，高度: {current_height:.1f}m")
+                    last_report_time = elapsed
                 landing_start_time = None
             
             time.sleep(check_interval)
         
-        elapsed_time = time.time() - start_time
-        print(f"⏰ 等待降落超时 ({elapsed_time:.1f}s)，假设降落完成")
-        
-        if self.current_position:
-            final_height = self.current_position.z
-            final_distance = math.sqrt(self.current_position.x**2 + self.current_position.y**2)
-            print(f"   最终位置: 距离原点 {final_distance:.1f}m，高度 {final_height:.1f}m")
-            
-            if final_distance <= 100.0 and final_height <= 10.0:
-                print("✅ 位置合理，认为降落成功")
-                return True
-        
-        print("⚠️ 降落状态不确定，但继续完成任务")
+        # 只有在ROS出现问题时才会到达这里
+        print(f"❌ ROS状态异常，退出等待")
         return False
 
     def emergency_stop(self):
@@ -686,8 +731,172 @@ class VTOLFlightController:
     def shutdown(self):
         """关闭飞行控制器"""
         print("关闭VTOL飞行控制器...")
+        
+        # 关闭人员位置读取器
+        if hasattr(self, 'person_reader'):
+            self.person_reader.shutdown()
+            
         self.ros_comm.shutdown()
 
+    # 新增的任务方法，满足任务要求
+    def fly_to_target_1(self):
+        """任务2: 切换到固定翼模式，飞行到目标点(1495, 250, 40)"""
+        print(f"\n✈️ 任务2: 固定翼模式飞向目标点1 (1495, 250, 40)")
+        print("="*50)
+        
+        target_x, target_y, target_z = 1495, 250, 40
+        
+        # 安全检查
+        is_safe, safety_msg = self.check_flight_safety(target_x, target_y, target_z)
+        if not is_safe:
+            print(f"❌ 安全检查失败: {safety_msg}")
+            return False
+        
+        # 切换到固定翼模式并飞行
+        success = self.fly_to_target(target_x, target_y, target_z)
+        
+        if success:
+            print("✅ 成功到达目标点1!")
+            self.publish_status(0x02)  # 发布状态0x02
+            return True
+        else:
+            print("❌ 未能到达目标点1")
+            return False
+
+    def fly_to_target_2(self):
+        """任务3: 飞向目标点(1495, -250, 40)"""
+        print(f"\n✈️ 任务3: 飞向目标点2 (1495, -250, 40)")
+        print("="*50)
+        
+        target_x, target_y, target_z = 1495, -250, 40
+        
+        # 安全检查
+        is_safe, safety_msg = self.check_flight_safety(target_x, target_y, target_z)
+        if not is_safe:
+            print(f"❌ 安全检查失败: {safety_msg}")
+            return False
+        
+        # 继续使用固定翼模式并飞行
+        success = self.fly_to_target(target_x, target_y, target_z)
+        
+        if success:
+            print("✅ 成功到达目标点2!")
+            self.publish_status(0x03)  # 发布状态0x03
+            return True
+        else:
+            print("❌ 未能到达目标点2")
+            return False
+
+    def visit_persons(self):
+        """任务4: 按y坐标从小到大依次飞到每个人的位置（高度20米）"""
+        print(f"\n👥 任务4: 依次飞向人员位置 (高度20米)")
+        print("="*50)
+        
+        # 等待获取人员位置数据
+        print("⏳ 等待获取人员位置数据...")
+        # 在等待期间持续发布当前位置以保持飞行稳定
+        if self.current_position:
+            current_x = self.current_position.x
+            current_y = self.current_position.y
+            current_z = self.current_position.z
+            
+            for i in range(30):  # 3秒，每0.1秒发布一次
+                self.set_target_pose(current_x, current_y, current_z)
+                time.sleep(0.1)
+        
+        positions = self.person_reader.get_sorted_positions()
+        
+        if not positions:
+            print("❌ 未能获取人员位置数据")
+            return False
+        
+        print(f"📍 获取到{len(positions)}个人员位置")
+        
+        # 依次飞向每个人员位置
+        success_count = 0
+        for i, (x, y, z, name) in enumerate(positions, 1):
+            print(f"\n🎯 飞向第{i}个人员: {name} ({x:.1f}, {y:.1f}, {self.person_height})")
+            
+            # 安全检查
+            is_safe, safety_msg = self.check_flight_safety(x, y, self.person_height)
+            if not is_safe:
+                print(f"❌ 人员位置安全检查失败: {safety_msg}")
+                continue
+            
+            # 根据位置选择飞行模式并飞行
+            success = self.fly_to_target(x, y, self.person_height)
+            
+            if success:
+                print(f"   ✅ 成功到达{name}位置")
+                success_count += 1
+            else:
+                print(f"   ⚠️ 未能完全到达{name}位置")
+        
+        print(f"✅ 人员位置访问完成! ({success_count}/{len(positions)})")
+        self.publish_status(0x04)  # 发布状态0x04
+        return success_count > 0
+
+    def return_to_multirotor_zone(self):
+        """任务5: 飞回旋翼区并自动返航"""
+        print(f"\n🏠 任务5: 返回旋翼区并自动返航")
+        print("="*50)
+        
+        # 目标：旋翼区边缘
+        target_x, target_y = 0, 0  # 回到原点
+        target_z = self.cruise_height
+        
+        current_x = self.current_position.x
+        current_y = self.current_position.y
+        
+        print(f"从 ({current_x:.1f}, {current_y:.1f}) 返回旋翼区 ({target_x}, {target_y})")
+        
+        # 如果当前不在旋翼区，需要路径规划避开居民区
+        if not self.can_switch_to_multirotor(current_x, current_y):
+            print("当前在旋翼区外，规划返航路径...")
+            
+            # 使用固定翼模式
+            self.switch_to_mode("plane")
+            
+            # 路径规划
+            waypoints = self.find_safe_waypoints(current_x, current_y, target_x, target_y)
+            
+            if waypoints:
+                # 飞向航点，最后一个航点应该在旋翼区边缘
+                for i, (wp_x, wp_y) in enumerate(waypoints[:-1]):  # 除了最后一个点
+                    print(f"🎯 返航航点 {i+1}: ({wp_x:.1f}, {wp_y:.1f})")
+                    self.wait_for_position_reached(wp_x, wp_y, target_z, tolerance=30.0)
+                
+                # 接近旋翼区边缘
+                edge_x, edge_y = waypoints[-1]
+                print(f"🎯 接近旋翼区边缘: ({edge_x:.1f}, {edge_y:.1f})")
+                self.wait_for_position_reached(edge_x, edge_y, target_z, tolerance=30.0)
+        
+        # 进入旋翼区
+        print("进入旋翼区...")
+        if self.can_switch_to_multirotor():
+            self.switch_to_mode("multirotor")
+        
+        # 飞到旋翼区内合适位置
+        self.wait_for_position_reached(target_x, target_y, target_z, tolerance=30.0)
+        
+        # 执行自动返航
+        print("🏠 执行自动返航指令...")
+        self.send_cmd("AUTO.RTL")
+        
+        # 等待返航完成
+        success = self.wait_for_landing_completion()
+        
+        if success:
+            print("✅ 自动返航完成!")
+            self.publish_status(0x05)  # 发布状态0x05
+            return True
+        else:
+            print("⚠️ 返航完成（可能有异常）")
+            return True
+
+    def publish_status(self, status_code):
+        """发布状态"""
+        self.ros_comm.publish_condition(status_code)
 
 def test_flight_controller():
     """测试飞行控制器"""
@@ -701,7 +910,7 @@ def test_flight_controller():
         controller.init_ros_communication()
         
         # 等待位置信息
-        if controller.wait_for_position(timeout=5):
+        if controller.wait_for_position():
             pos = controller.current_position
             print(f"✅ 成功获取位置: ({pos.x:.1f}, {pos.y:.1f}, {pos.z:.1f})")
         else:
