@@ -272,7 +272,10 @@ class VTOLDemoFlight:
                 print("❌ 任务5失败")
                 return False
             print("✅ 任务5完成")
+            print("📡 正在发布状态0x05...")
             self.publish_condition(0x05)  # 发布状态0x05
+            time.sleep(0.2)  # 给ROS一点时间处理消息
+            print("✅ 状态0x05已发布")
             
             print("\n🎉 所有任务完成！")
             return True

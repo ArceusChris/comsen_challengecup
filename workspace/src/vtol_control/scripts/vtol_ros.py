@@ -30,7 +30,7 @@ class VTOLROSCommunicator:
         self.should_publish = False
         
         # Condition状态管理
-        self.current_condition = 0xAA  # 初始化为0xAA
+        self.current_condition = 0x7F  # 初始化为0x7F (127，Int8最大值)
         self.last_sent_condition = None
         self.condition_timer = None  # 定时器用于定期发布condition
         
@@ -105,7 +105,13 @@ class VTOLROSCommunicator:
     def publish_condition(self, condition_value):
         """更新并发布condition状态"""
         self.current_condition = condition_value
-        # 不再直接发布，而是通过定时器统一发布
+        # 立即发布一次，确保状态及时更新
+        if self.condition_pub is not None:
+            msg = Int8()
+            msg.data = condition_value
+            self.condition_pub.publish(msg)
+            print(f"📡 立即发布状态: {condition_value}")
+        # 定时器会继续以20Hz频率发布
 
     def _publish_condition_timer_callback(self, event):
         """定时器回调函数，20Hz发布当前condition状态"""

@@ -30,6 +30,6 @@ catkin_install_python(PROGRAMS
   scripts/vtol_Astar.py
   scripts/vtol_map.py
   scripts/vtol_smoothpath.py
-  scripts/image_capture.py
+  scripts/get_person_positions.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

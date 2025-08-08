@@ -843,7 +843,8 @@ class VTOLFlightController:
         
         # 目标：旋翼区边缘
         target_x, target_y = 0, 0  # 回到原点
-        target_z = self.cruise_height
+        # target_z = self.cruise_height
+        target_z = 20.0
         
         current_x = self.current_position.x
         current_y = self.current_position.y
@@ -888,10 +889,11 @@ class VTOLFlightController:
         
         if success:
             print("✅ 自动返航完成!")
-            self.publish_status(0x05)  # 发布状态0x05
+            # 不在这里发布状态，让上层vtol_demo.py统一管理
             return True
         else:
             print("⚠️ 返航完成（可能有异常）")
+            # 不在这里发布状态，让上层vtol_demo.py统一管理
             return True
 
     def publish_status(self, status_code):
