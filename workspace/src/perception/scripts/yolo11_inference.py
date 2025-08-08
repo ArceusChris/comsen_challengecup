@@ -175,10 +175,33 @@ class YOLO11InferenceNode:
     def load_model(self):
         """加载YOLO11模型"""
         try:
-            # 检查模型文件是否存在
-            if not os.path.exists(self.model_path):
-                rospy.logwarn(f"模型文件不存在: {self.model_path}，将使用默认的yolo11n.pt")
-                self.model_path = 'yolo11n.pt'
+            # 尝试多个可能的模型路径
+            model_paths = [
+                self.model_path,                              # 原始指定路径
+                os.path.join(os.getcwd(), self.model_path),   # 当前工作目录
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), self.model_path),  # 脚本所在目录
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", os.path.basename(self.model_path)),  # 包目录下的models文件夹
+                os.path.join("/home/xylin/comsen_challengecup", self.model_path),  # 工作空间根目录
+                os.path.join("/home/xylin/comsen_challengecup/models", os.path.basename(self.model_path)),  # 工作空间中的models目录
+                'yolo11n.pt'  # 默认模型名称
+            ]
+            
+            # 查找第一个存在的模型文件
+            found_model_path = None
+            for path in model_paths:
+                rospy.loginfo(f"尝试查找模型文件: {path}")
+                if os.path.exists(path):
+                    found_model_path = path
+                    rospy.loginfo(f"找到模型文件: {path}")
+                    break
+            
+            if found_model_path is None:
+                rospy.logerr("无法找到任何有效的模型文件路径")
+                rospy.signal_shutdown("模型文件不存在")
+                return
+            
+            # 更新模型路径
+            self.model_path = found_model_path
             
             # 加载模型
             self.model = YOLO(self.model_path)

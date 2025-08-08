@@ -17,7 +17,7 @@
         
         <!-- 基本参数 -->
         <param name="aircraft_type" value="iris"/>
-        <param name="model_path" value="/home/yzy/comsen_challengecup/workspace/src/perception/models/yolo11n_v2.pt"/>
+        <param name="model_path" value="$(find perception)/models/yolo11n_original.pt" />
         <param name="confidence_threshold" value="0.6"/>
         <param name="iou_threshold" value="0.45"/>
         <!-- 点云参数 -->
@@ -35,7 +35,7 @@
         
         <!-- 基本参数 -->
         <param name="aircraft_type" value="standard_vtol"/>
-        <param name="model_path" value="/home/yzy/comsen_challengecup/workspace/src/perception/models/yolo11n_v2.pt"/>
+        <param name="model_path" value="$(find perception)/models/yolo11n_v2.pt"/>
         <param name="confidence_threshold" value="0.6"/>
         <param name="iou_threshold" value="0.45"/>
         <!-- 点云参数 -->
