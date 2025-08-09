@@ -200,7 +200,7 @@ class MultirotorControl:
         self.descent_rate = 2.0      # 降落速率 m/s
         self.max_vel_xy = 1.5          # XY方向最大速度
         self.max_vel_z = 2.0           # Z方向最大速度
-        self.target_timeout = 3.0      # 目标丢失超时时间(秒)
+        self.target_timeout = 10000.0      # 目标丢失超时时间(秒)
         
         # 其他控制参数也从ROS参数服务器获取
         self.max_vel_xy = rospy.get_param('~max_vel_xy', 1.5)          # XY方向最大速度
@@ -851,7 +851,7 @@ class MultirotorControl:
                 vel_y *= 0.6
                 
                 # 使用PID控制器控制下降速度
-                target_altitude = max(0.65, current_altitude - 0.1)
+                target_altitude = max(0.65, current_altitude - 0.5)
                 vel_z = self._altitude_to_velocity_pid(target_altitude)
                 
                 # 限制下降速度
@@ -1035,6 +1035,7 @@ def main():
         return
     
     multirotor_control.controller.current_iris_status.data = 4
+    multirotor_control.land(altitude=10)
     success = multirotor_control.visual_landing(target_type="landing_target_camo")
     if not success:
         print("视觉降落失败，执行基础降落")
