@@ -250,12 +250,7 @@ class RedPatternDetector:
                     rospy.loginfo(f"Red platform detected via YOLO11 backup at {candidate['center']} with confidence {candidate['total_score']:.2f}")
                 else:
                     rospy.loginfo(f"Red platform detected via CV at {candidate['center']} with score {candidate['total_score']:.2f}")
-            else:
-                if self.should_use_yolo_backup():
-                    rospy.logwarn("No red platform detected by either CV (timeout) or YOLO11 backup")
-                else:
-                    rospy.logdebug("No red platform detected by CV (within timeout)")
-            # 发布调试图像
+
             debug_image = self.draw_debug_info(cv_image, candidate, red_mask)
             debug_msg = self.bridge.cv2_to_imgmsg(debug_image, "bgr8")
             self.debug_pub.publish(debug_msg)
