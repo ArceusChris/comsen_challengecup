@@ -713,3 +713,10 @@ class CamouflagePatternDetector:
             return smoothed_detection
         
         return current_detection
+
+if __name__ == '__main__':
+    try:
+        detector = CamouflagePatternDetector()
+        detector.run()
+    except rospy.ROSInterruptException:
+        rospy.loginfo("白色正方形检测器已停止")
