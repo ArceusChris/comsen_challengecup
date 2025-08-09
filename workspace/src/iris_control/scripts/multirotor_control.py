@@ -182,15 +182,15 @@ class MultirotorControl:
         self.camera_center_y = self.image_height / 2
         
         # PID控制参数
-        self.kp_x = 3.0      # X轴比例增益
+        self.kp_x = 4.0      # X轴比例增益
         self.ki_x = 0.1      # X轴积分增益
         self.kd_x = 0.15     # X轴微分增益
 
-        self.kp_y = 3.0      # Y轴比例增益
+        self.kp_y = 4.0      # Y轴比例增益
         self.ki_y = 0.1      # Y轴积分增益
         self.kd_y = 0.15     # Y轴微分增益
         
-        self.kp_z = 3.0      # Z轴比例增益
+        self.kp_z = 4.0      # Z轴比例增益
         self.ki_z = 0.05     # Z轴积分增益
         self.kd_z = 0.12     # Z轴微分增益
         
@@ -1069,7 +1069,7 @@ def main():
             return
     multirotor_control.takeoff(altitude=20)
     multirotor_control.go_to_position(original_poses[3], stop=True)
-    multirotor_control.controller.return_to_home()
+    multirotor_control.controller.return_home()
     multirotor_control.controller.current_iris_status.data = 8
 
     if success:
