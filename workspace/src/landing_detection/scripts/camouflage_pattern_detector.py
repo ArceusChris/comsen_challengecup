@@ -86,6 +86,9 @@ class CamouflagePatternDetector:
         """
         检测白色正方形 - 基于颜色阈值和轮廓检测
         """
+        # 添加帧ID用于警告日志
+        frame_id = rospy.Time.now().to_nsec()
+        
         # 1. 转换为HSV颜色空间，更容易分离白色区域
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
@@ -96,6 +99,11 @@ class CamouflagePatternDetector:
         # 3. 创建白色区域的掩码
         white_mask = cv2.inRange(hsv, lower_white, upper_white)
         
+        # 检查白色掩码是否为空
+        white_pixels = np.sum(white_mask > 0)
+        if white_pixels == 0:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤3警告: 白色掩码中没有像素，HSV阈值可能需要调整")
+        
         # 4. 应用更强的形态学操作，去除噪点并连接断开的区域
         # 先进行更强的闭操作来填充内部黑色噪声
         close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (self.close_kernel_size, self.close_kernel_size))
@@ -104,6 +112,11 @@ class CamouflagePatternDetector:
         # 再进行开操作去除外部小的白色噪点
         open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (self.open_kernel_size, self.open_kernel_size))
         white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, open_kernel)
+        
+        # 检查形态学操作后的掩码是否为空
+        morph_pixels = np.sum(white_mask > 0)
+        if morph_pixels == 0:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤4警告: 形态学操作后白色掩码为空，可能需要调整形态学参数")
         
         # 对于更大的黑色噪声（如阴影），使用填充孔洞操作
         # 复制掩码用于填充
@@ -125,8 +138,18 @@ class CamouflagePatternDetector:
         # 将原始掩码与孔洞合并，填充所有内部孔洞
         white_mask = cv2.bitwise_or(white_mask, holes)
         
+        # 检查填充孔洞后的掩码是否为空
+        fill_pixels = np.sum(white_mask > 0)
+        if fill_pixels == 0:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤4警告: 填充孔洞后白色掩码为空")
+        
         # 5. 查找轮廓
         contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # 检查轮廓是否为空
+        if len(contours) == 0:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤5警告: 未找到任何轮廓")
+            return None
         
         best_square = None
         best_score = 0
@@ -156,6 +179,9 @@ class CamouflagePatternDetector:
         
         rospy.logdebug(f"Area thresholds - min: {expected_min_area}, max: {expected_max_area}")
         
+        # 记录通过面积筛选的轮廓数量
+        contours_after_area_filter = 0
+        
         for contour in contours:
             # 计算轮廓面积
             area = cv2.contourArea(contour)
@@ -163,6 +189,8 @@ class CamouflagePatternDetector:
             # 面积过滤
             if area < expected_min_area or area > expected_max_area:
                 continue
+            
+            contours_after_area_filter += 1
             
             # 计算周长
             perimeter = cv2.arcLength(contour, True)
@@ -211,6 +239,15 @@ class CamouflagePatternDetector:
                             'aspect_ratio': aspect_ratio,
                             'rect_ratio': rect_ratio
                         }
+        
+        # 检查面积筛选后是否没有轮廓
+        if contours_after_area_filter == 0:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤5警告: 面积筛选后没有轮廓(min_area={expected_min_area}, max_area={expected_max_area})")
+        
+        # 检查四边形筛选后是否没有候选
+        if best_square is None:
+            rospy.logwarn(f"[Frame {frame_id}] 步骤5警告: 未找到符合要求的四边形")
+            return None
         
         # 返回检测到的最佳正方形
         if best_square:
@@ -405,11 +442,18 @@ class CamouflagePatternDetector:
         图像回调函数
         """
         try:
+            # 添加帧ID用于警告日志
+            frame_id = rospy.Time.now().to_nsec()
+            
             # 转换图像
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
             
             # 检测白色正方形降落平台
             candidate = self.detect_camouflage_circle(cv_image)  # 保留函数名但内部逻辑已更改
+            
+            # 如果初始检测失败，记录警告
+            if candidate is None:
+                rospy.logwarn(f"[Frame {frame_id}] 初始检测失败: detect_camouflage_circle返回None")
             
             # 如果检测成功且得分高于阈值
             if candidate is not None and candidate['total_score'] >= self.min_detection_score:
@@ -420,16 +464,28 @@ class CamouflagePatternDetector:
             else:
                 # 检测失败
                 if candidate is not None:
-                    rospy.logdebug(f"检测得分过低: {candidate['total_score']:.2f} < {self.min_detection_score}")
+                    rospy.logwarn(f"[Frame {frame_id}] 检测得分过低: {candidate['total_score']:.2f} < {self.min_detection_score}")
                 self.update_cv_detection_status(False)
                 candidate = None
             
             # 如果CV检测失败且超时，使用YOLO备用检测
             if candidate is None and self.should_use_yolo_backup():
+                rospy.loginfo(f"[Frame {frame_id}] 使用YOLO11备用检测")
                 candidate = self.use_yolo_as_backup()
-                if candidate is not None:
+                
+                # 检查YOLO备用检测结果
+                if candidate is None:
+                    rospy.logwarn(f"[Frame {frame_id}] YOLO11备用检测失败: 返回None")
+                else:
                     # 对YOLO结果也进行平滑处理
+                    original_candidate = candidate.copy()
                     candidate = self.smooth_detection(candidate)
+                    
+                    # 检查平滑处理是否导致候选区域为空
+                    if candidate is None:
+                        rospy.logwarn(f"[Frame {frame_id}] 平滑处理后YOLO11候选区域变为空")
+                        # 恢复原始候选区域
+                        candidate = original_candidate
             
             # 发布结果
             if candidate is not None:
@@ -451,7 +507,7 @@ class CamouflagePatternDetector:
                     rospy.loginfo(f"白色正方形降落平台通过CV检测在 {candidate['center']} 位置，得分为 {candidate['total_score']:.2f}")
             else:
                 if self.should_use_yolo_backup():
-                    rospy.logwarn("CV检测（超时）和YOLO11备用都未检测到白色正方形降落平台")
+                    rospy.logwarn(f"[Frame {frame_id}] CV检测（超时）和YOLO11备用都未检测到白色正方形降落平台")
                 else:
                     rospy.logdebug("CV未检测到白色正方形降落平台（未超时）")
                     
@@ -487,7 +543,11 @@ class CamouflagePatternDetector:
         """
         使用YOLO11检测结果作为备用
         """
+        # 添加帧ID用于警告日志
+        frame_id = rospy.Time.now().to_nsec()
+        
         if not self.is_yolo_detection_valid():
+            rospy.logwarn(f"[Frame {frame_id}] YOLO11备用检测结果无效或超时")
             return None
         
         # 创建候选对象，格式与主检测器一致
@@ -645,7 +705,11 @@ class CamouflagePatternDetector:
         对检测结果进行时间序列平滑处理，减少抖动和误检
         """
         if current_detection is None:
+            rospy.logwarn("[平滑处理] 输入检测结果为空")
             return None
+        
+        # 添加帧ID用于警告日志
+        frame_id = rospy.Time.now().to_nsec()
         
         # 添加时间戳
         current_detection['timestamp'] = rospy.Time.now()
@@ -711,6 +775,8 @@ class CamouflagePatternDetector:
                                                 (1-alpha) * smoothed_score
             
             return smoothed_detection
+        else:
+            rospy.logwarn(f"[Frame {frame_id}] 平滑处理警告: 总权重为0，无法进行平滑")
         
         return current_detection
 
