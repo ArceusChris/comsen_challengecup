@@ -38,14 +38,14 @@ class CamouflagePatternDetector:
         
         # 检测参数
         self.white_threshold = 200  # 白色阈值
-        self.min_circle_radius = 15  # 减小最小半边长，更好地检测远处的目标
+        self.min_circle_radius = 5  # 减小最小半边长，更好地检测远处的目标
         self.max_circle_radius = 200  # 正方形的最大半边长
-        self.min_contour_area = 400   # 减小最小轮廓面积
+        self.min_contour_area = 25   # 减小最小轮廓面积
         
         # 自适应面积参数
         self.use_adaptive_area = True  # 是否使用自适应面积阈值
-        self.adaptive_area_min_ratio = 0.001  # 相对于图像面积的最小比例
-        self.adaptive_area_max_ratio = 0.25   # 相对于图像面积的最大比例
+        self.adaptive_area_min_ratio = 0.00001  # 相对于图像面积的最小比例
+        self.adaptive_area_max_ratio = 0.75   # 相对于图像面积的最大比例
         self.min_detection_score = 0.65  # 最小检测得分
         
         # 白色正方形参数
@@ -53,8 +53,8 @@ class CamouflagePatternDetector:
         self.min_white_coverage = 0.7  # 最小白色覆盖率
         
         # 形态学操作参数
-        self.close_kernel_size = 5  # 闭操作核大小
-        self.open_kernel_size = 3   # 开操作核大小
+        self.close_kernel_size = 7  # 闭操作核大小
+        self.open_kernel_size = 2   # 开操作核大小
         
         # 过滤和平滑参数
         self.detection_history = []  # 检测历史
