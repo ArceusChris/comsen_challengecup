@@ -22,10 +22,10 @@ class CamouflagePatternDetector:
         self.yolo_sub = rospy.Subscriber('/yolo11/pixel_position/white', Point, self.yolo_callback)
         
         # 发布降落点坐标
-        self.target_pub = rospy.Publisher('/landing_target_white', PointStamped, queue_size=1)
+        self.target_pub = rospy.Publisher('/landing_target_camo', PointStamped, queue_size=1)
         
         # 发布调试图像
-        self.debug_pub = rospy.Publisher('/landing_debug_white', Image, queue_size=1)
+        self.debug_pub = rospy.Publisher('/landing_debug_camo', Image, queue_size=1)
         
         # YOLO11检测结果缓存
         self.latest_yolo_detection = None
