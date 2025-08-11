@@ -43,7 +43,7 @@ class CamouflagePatternDetector:
         self.min_contour_area = 25   # 减小最小轮廓面积
         
         # 自适应面积参数
-        self.use_adaptive_area = True  # 是否使用自适应面积阈值
+        self.use_adaptive_area = False  # 是否使用自适应面积阈值
         self.adaptive_area_min_ratio = 0.00001  # 相对于图像面积的最小比例
         self.adaptive_area_max_ratio = 0.75   # 相对于图像面积的最大比例
         self.min_detection_score = 0.65  # 最小检测得分
@@ -167,7 +167,7 @@ class CamouflagePatternDetector:
             max_area = self.max_circle_radius * self.max_circle_radius
         
         # 如果之前有检测到目标，使用更严格的筛选条件
-        if len(self.detection_history) > 0:
+        if False:
             last_detection = self.detection_history[-1]
             last_radius = last_detection.get('radius', 0)
             # 调整搜索范围，考虑目标大小可能的变化
@@ -187,8 +187,8 @@ class CamouflagePatternDetector:
             area = cv2.contourArea(contour)
             
             # 面积过滤
-            if area < expected_min_area or area > expected_max_area:
-                continue
+            # if area < expected_min_area or area > expected_max_area:
+            #     continue
             
             contours_after_area_filter += 1
             

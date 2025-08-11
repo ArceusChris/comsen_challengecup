@@ -195,10 +195,10 @@ class MultirotorControl:
         self.kd_z = 0.12     # Z轴微分增益
         
         # 降落参数
-        self.landing_threshold = 30    # 像素误差阈值
+        self.landing_threshold = 100    # 像素误差阈值
         self.min_altitude = 0.8        # 最小安全高度
         self.descent_rate = 2.0      # 降落速率 m/s
-        self.max_vel_xy = 1.5          # XY方向最大速度
+        self.max_vel_xy = 5.0          # XY方向最大速度
         self.max_vel_z = 2.0           # Z方向最大速度
         self.target_timeout = 10000.0      # 目标丢失超时时间(秒)
         

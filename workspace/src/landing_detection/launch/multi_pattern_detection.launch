@@ -18,11 +18,7 @@
             <param name="min_circle_radius" value="30" />
             <param name="max_circle_radius" value="200" />
             <param name="min_contour_area" value="1000" />
-            
-            <!-- 纹理分析参数 -->
-            <param name="texture_window_size" value="15" />
-            <param name="edge_threshold" value="50" />
-            <param name="circularity_threshold" value="0.6" />
+        
         </node>
     </group>
     
