@@ -20,8 +20,8 @@ def load_yolo(model_path="yolov12n.pt", device="cuda"):
 
 # Parse arguments
 parser = argparse.ArgumentParser(description='YOLO inference script that communicates with ROS')
-parser.add_argument('--model', type=str, default='yolov11n.pt', help='YOLO model path')
-parser.add_argument('--device', type=str, default='cpu', help='Device to run inference on (cpu/cuda)')
+parser.add_argument('--model', type=str, default='yolov12n.pt', help='YOLO model path')
+parser.add_argument('--device', type=str, default='cuda', help='Device to run inference on (cpu/cuda)')
 parser.add_argument('--conf', type=float, default=0.45, help='Confidence threshold')
 parser.add_argument('--iou', type=float, default=0.45, help='IOU threshold')
 args = parser.parse_args()

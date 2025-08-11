@@ -182,32 +182,32 @@ class MultirotorControl:
         self.camera_center_y = self.image_height / 2
         
         # PID控制参数
-        self.kp_x = 4.0      # X轴比例增益
-        self.ki_x = 0.1      # X轴积分增益
-        self.kd_x = 0.15     # X轴微分增益
+        self.kp_x = 7.5     # X轴比例增益
+        self.ki_x = 0.0      # X轴积分增益
+        self.kd_x = 0.0     # X轴微分增益
 
-        self.kp_y = 4.0      # Y轴比例增益
-        self.ki_y = 0.1      # Y轴积分增益
-        self.kd_y = 0.15     # Y轴微分增益
-        
+        self.kp_y = 7.5     # Y轴比例增益
+        self.ki_y = 0.0      # Y轴积分增益
+        self.kd_y = 0.0     # Y轴微分增益
+
         self.kp_z = 4.0      # Z轴比例增益
-        self.ki_z = 0.05     # Z轴积分增益
-        self.kd_z = 0.12     # Z轴微分增益
-        
+        self.ki_z = 0.0     # Z轴积分增益
+        self.kd_z = 0.0     # Z轴微分增益
+
         # 降落参数
-        self.landing_threshold = 100    # 像素误差阈值
+        self.landing_threshold = 30    # 像素误差阈值
         self.min_altitude = 0.8        # 最小安全高度
-        self.descent_rate = 2.0      # 降落速率 m/s
+        self.descent_rate = 5.0      # 降落速率 m/s
         self.max_vel_xy = 5.0          # XY方向最大速度
-        self.max_vel_z = 2.0           # Z方向最大速度
-        self.target_timeout = 10000.0      # 目标丢失超时时间(秒)
+        self.max_vel_z = 1.0           # Z方向最大速度
+        self.target_timeout = 1.0     # 目标丢失超时时间(秒)
         
         # 其他控制参数也从ROS参数服务器获取
-        self.max_vel_xy = rospy.get_param('~max_vel_xy', 1.5)          # XY方向最大速度
+        self.max_vel_xy = rospy.get_param('~max_vel_xy', 5.0)          # XY方向最大速度
         self.max_vel_z = rospy.get_param('~max_vel_z', 1.0)            # Z方向最大速度
         self.landing_threshold = rospy.get_param('~landing_threshold', 30)    # 像素误差阈值
         self.min_altitude = rospy.get_param('~min_altitude', 0.65)            # 最小安全高度
-        self.descent_rate = rospy.get_param('~descent_rate', 0.25)            # 降落速率 m/s
+        self.descent_rate = rospy.get_param('~descent_rate', 1.0)            # 降落速率 m/s
         self.target_timeout = rospy.get_param('~target_timeout', 2.0)         # 目标丢失超时时间(秒)
         
         # 视觉降落状态变量
@@ -847,8 +847,6 @@ class MultirotorControl:
             if error_distance is not None:
                 # 使用PID控制器计算XY方向速度（下降时降低响应强度）
                 vel_x, vel_y = self._pixel_to_velocity_pid(error_x, error_y)
-                vel_x *= 0.6  # 下降时减少XY方向的修正幅度
-                vel_y *= 0.6
                 
                 # 使用PID控制器控制下降速度
                 target_altitude = max(0.65, current_altitude - 0.5)
