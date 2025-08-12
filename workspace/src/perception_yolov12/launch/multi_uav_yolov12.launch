@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 多无人机推理节点启动文件 -->
+  
+  <!-- 参数 -->
+  <arg name="iris_model" default="yolov12n.pt" />
+  <arg name="vtol_model" default="yolov12n.pt" />
+  <arg name="device" default="cpu" />
+  <arg name="conf_threshold" default="0.45" />
+  <arg name="iou_threshold" default="0.45" />
+  
+  <!-- Iris无人机的YOLOv12节点 -->
+  <group ns="iris_perception">
+    <!-- 桥接节点 -->
+    <node pkg="perception_yolov12" type="yolo12_bridge_node.py" name="yolo12_bridge_node" output="screen">
+      <param name="aircraft_type" value="iris" />
+      <param name="image_topic" value="/iris_0/camera/image_raw" />
+      <param name="pose_topic" value="/iris_0/mavros/local_position/pose" />
+      <param name="camera_info_topic" value="/iris_0/camera/camera_info" />
+      <param name="sender_port" value="5555" />
+      <param name="receiver_port" value="5556" />
+    </node>
+    
+    <!-- 推理脚本 -->
+    <node pkg="perception_yolov12" type="yolo12_inference.py" name="yolo12_inference" output="screen"
+          args="--model $(arg iris_model) --device $(arg device) --conf $(arg conf_threshold) --iou $(arg iou_threshold) --sender-port 5555 --receiver-port 5556" />
+  </group>
+  
+  <!-- Standard VTOL无人机的YOLOv12节点 -->
+  <group ns="vtol_perception">
+    <!-- 桥接节点 -->
+    <node pkg="perception_yolov12" type="yolo12_bridge_node.py" name="yolo12_bridge_node" output="screen">
+      <param name="aircraft_type" value="standard_vtol" />
+      <param name="image_topic" value="/standard_vtol_0/camera/image_raw" />
+      <param name="pose_topic" value="/standard_vtol_0/mavros/local_position/pose" />
+      <param name="camera_info_topic" value="/standard_vtol_0/camera/camera_info" />
+      <param name="sender_port" value="5557" />
+      <param name="receiver_port" value="5558" />
+    </node>
+    
+    <!-- 推理脚本 -->
+    <node pkg="perception_yolov12" type="yolo12_inference.py" name="yolo12_inference" output="screen"
+          args="--model $(arg vtol_model) --device $(arg device) --conf $(arg conf_threshold) --iou $(arg iou_threshold) --sender-port 5557 --receiver-port 5558" />
+  </group>
+</launch>

@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- 选择机型参数 -->
+  <arg name="aircraft_type" default="standard_vtol" />
+  <arg name="model_path" default="yolov12n.pt" />
+  <arg name="device" default="cpu" />
+  <arg name="conf_threshold" default="0.45" />
+  <arg name="iou_threshold" default="0.45" />
+  
+  <!-- 启动桥接节点 -->
+  <node pkg="perception_yolov12" type="yolo12_bridge_node.py" name="yolo12_bridge_node" output="screen">
+    <param name="aircraft_type" value="$(arg aircraft_type)" />
+  </node>
+  
+  <!-- 启动推理脚本 -->
+  <node pkg="perception_yolov12" type="yolo12_inference.py" name="yolo12_inference" output="screen"
+        args="--model $(arg model_path) --device $(arg device) --conf $(arg conf_threshold) --iou $(arg iou_threshold)" />
+</launch>

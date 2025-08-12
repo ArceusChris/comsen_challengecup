@@ -2,47 +2,40 @@
 <launch>
     
     <arg name="mode" default="both" />
-
+    <arg name="iris_model" default="$(find perception_yolov12)/models/yolov12n.pt" />
+    <arg name="vtol_model" default="$(find perception_yolov12)/models/yolov12n.pt" />
     <node pkg="tf_transform" 
           type="mavros_pose_to_tf.py" 
           name="mavros_pose_to_tf" 
           output="screen">  
     </node>
 
-    <node name="iris_yolo11_inference_node" 
-            pkg="perception" 
-            type="yolo11_inference.py" 
-            output="screen"
-            respawn="false">
-        
-        <!-- 基本参数 -->
-        <param name="aircraft_type" value="iris"/>
-        <param name="model_path" value="$(find perception)/models/yolo11n_original.pt" />
-        <param name="confidence_threshold" value="0.6"/>
-        <param name="iou_threshold" value="0.45"/>
-        <!-- 点云参数 -->
-        <param name="publish_pointcloud" value="true"/>
-        
-    </node>
+    <group ns="iris_perception">
+        <!-- 桥接节点 -->
+        <node pkg="perception_yolov12" type="yolo12_bridge_node.py" name="yolo12_bridge_node" output="screen">
+        <param name="aircraft_type" value="iris" />
+        <param name="image_topic" value="/iris_0/camera/image_raw" />
+        <param name="pose_topic" value="/iris_0/mavros/local_position/pose" />
+        <param name="camera_info_topic" value="/iris_0/camera/camera_info" />
+        <param name="sender_port" value="5555" />
+        <param name="receiver_port" value="5556" />
+        </node>
+    </group>
     <!-- 打印启动信息 -->
     <node name="startup_info" pkg="rospy" type="echo" args="启动YOLO11推理节点 - Standard VTOL机型" output="screen" if="false"/>
     
-    <node name="vtol_yolo11_inference_node" 
-            pkg="perception" 
-            type="yolo11_inference.py" 
-            output="screen"
-            respawn="false">
+    <group ns="vtol_perception">
+        <!-- 桥接节点 -->
+        <node pkg="perception_yolov12" type="yolo12_bridge_node.py" name="yolo12_bridge_node" output="screen">
+        <param name="aircraft_type" value="standard_vtol" />
+        <param name="image_topic" value="/standard_vtol_0/camera/image_raw" />
+        <param name="pose_topic" value="/standard_vtol_0/mavros/local_position/pose" />
+        <param name="camera_info_topic" value="/standard_vtol_0/camera/camera_info" />
+        <param name="sender_port" value="5557" />
+        <param name="receiver_port" value="5558" />
+        </node>
+    </group>
         
-        <!-- 基本参数 -->
-        <param name="aircraft_type" value="standard_vtol"/>
-        <param name="model_path" value="$(find perception)/models/yolo11n_v2.pt"/>
-        <param name="confidence_threshold" value="0.6"/>
-        <param name="iou_threshold" value="0.45"/>
-        <!-- 点云参数 -->
-        <param name="publish_pointcloud" value="true"/>
-        
-    </node>
-    
     <!-- 打印启动信息 -->
     <node name="startup_info" pkg="rospy" type="echo" args="启动YOLO11推理节点 - Iris机型" output="screen" if="false"/>
    
