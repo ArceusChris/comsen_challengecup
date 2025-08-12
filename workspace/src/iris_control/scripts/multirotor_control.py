@@ -182,20 +182,20 @@ class MultirotorControl:
         self.camera_center_y = self.image_height / 2
         
         # PID控制参数
-        self.kp_x = 7.5     # X轴比例增益
+        self.kp_x = 2.0    # X轴比例增益
         self.ki_x = 0.0      # X轴积分增益
         self.kd_x = 0.0     # X轴微分增益
 
-        self.kp_y = 7.5     # Y轴比例增益
+        self.kp_y = 2.0     # Y轴比例增益
         self.ki_y = 0.0      # Y轴积分增益
         self.kd_y = 0.0     # Y轴微分增益
 
-        self.kp_z = 4.0      # Z轴比例增益
+        self.kp_z = 4.0     # Z轴比例增益
         self.ki_z = 0.0     # Z轴积分增益
         self.kd_z = 0.0     # Z轴微分增益
 
         # 降落参数
-        self.landing_threshold = 30    # 像素误差阈值
+        self.landing_threshold = 0.2    # 像素误差阈值
         self.min_altitude = 0.8        # 最小安全高度
         self.descent_rate = 5.0      # 降落速率 m/s
         self.max_vel_xy = 5.0          # XY方向最大速度
@@ -1034,7 +1034,7 @@ def main():
     
     multirotor_control.controller.current_iris_status.data = 4
     multirotor_control.land(altitude=10)
-    success = multirotor_control.visual_landing(target_type="landing_target_camo")
+    success = multirotor_control.visual_landing(target_type="landing_target_camo/world_coord")
     if not success:
         print("视觉降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
@@ -1048,7 +1048,7 @@ def main():
         return
     
     multirotor_control.controller.current_iris_status.data = 6
-    success = multirotor_control.visual_landing(target_type="landing_target_red")
+    success = multirotor_control.visual_landing(target_type="landing_target_red/world_coord")
     if not success:
         print("视觉降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
