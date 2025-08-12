@@ -4,10 +4,13 @@
 import rospy
 import cv2
 import numpy as np
-from sensor_msgs.msg import Image
-from geometry_msgs.msg import Point, PointStamped
+from sensor_msgs.msg import Image, CameraInfo
+from geometry_msgs.msg import Point, PointStamped, PoseStamped
 from cv_bridge import CvBridge
 import math
+import tf2_ros
+import tf2_geometry_msgs
+from tf.transformations import quaternion_matrix
 
 class CamouflagePatternDetector:
     def __init__(self):
@@ -18,14 +21,30 @@ class CamouflagePatternDetector:
         # 订阅图像话题
         self.image_sub = rospy.Subscriber('/iris_0/camera/image_raw', Image, self.image_callback)
         
+        # 订阅位姿和相机内参话题用于世界坐标计算
+        self.pose_sub = rospy.Subscriber('/iris_0/mavros/local_position/pose', PoseStamped, self.pose_callback)
+        self.camera_info_sub = rospy.Subscriber('/iris_0/camera/camera_info', CameraInfo, self.camera_info_callback)
+        
         # 订阅yolo12白色目标检测结果作为备用
         self.yolo_sub = rospy.Subscriber('/yolo12/pixel_position/white', Point, self.yolo_callback)
         
-        # 发布降落点坐标
+        # 发布降落点坐标（像素坐标）
         self.target_pub = rospy.Publisher('/landing_target_camo', PointStamped, queue_size=1)
+        
+        # 发布世界坐标
+        self.world_coord_pub = rospy.Publisher('/landing_target_camo/world_coord', Point, queue_size=1)
         
         # 发布调试图像
         self.debug_pub = rospy.Publisher('/landing_debug_camo', Image, queue_size=1)
+        
+        # 位姿和相机内参数据
+        self.current_pose = None
+        self.camera_info = None
+        
+        # 初始化TF2系统
+        self.tf_buffer = tf2_ros.Buffer(cache_time=rospy.Duration(10.0))
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        self.camera_frame_id = 'iris_0/camera_link'
         
         # yolo12检测结果缓存
         self.latest_yolo_detection = None
@@ -65,6 +84,10 @@ class CamouflagePatternDetector:
         self.yolo_timeout = 2.0  # YOLO检测结果超时时间（秒）
         
         rospy.loginfo("Enhanced white square detector initialized")
+        rospy.loginfo("等待TF系统建立...")
+        
+        # 等待TF系统建立
+        rospy.sleep(1.0)
     
     def preprocess_image(self, image):
         """
@@ -499,12 +522,37 @@ class CamouflagePatternDetector:
                 
                 self.target_pub.publish(target_msg)
                 
-                # 根据检测来源显示不同的日志信息
+                # 计算并发布世界坐标
+                if self.current_pose is not None and self.camera_info is not None:
+                    world_pos = self.pixel_to_world_coordinate(
+                        candidate['center'][0], candidate['center'][1], 
+                        self.current_pose, self.camera_info
+                    )
+                    
+                    if world_pos is not None:
+                        world_coord_msg = Point()
+                        world_coord_msg.x = world_pos[0]
+                        world_coord_msg.y = world_pos[1] 
+                        world_coord_msg.z = world_pos[2]
+                        self.world_coord_pub.publish(world_coord_msg)
+                        
+                        # 根据检测来源显示不同的日志信息
+                        source = candidate.get('source', 'cv')
+                        if source == 'yolo12':
+                            rospy.loginfo(f"白色正方形降落平台通过yolo12备用检测在像素位置 {candidate['center']}，世界坐标 [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]，置信度为 {candidate['total_score']:.2f}")
+                        else:
+                            rospy.loginfo(f"白色正方形降落平台通过CV检测在像素位置 {candidate['center']}，世界坐标 [{world_pos[0]:.2f}, {world_pos[1]:.2f}, {world_pos[2]:.2f}]，得分为 {candidate['total_score']:.2f}")
+                    else:
+                        rospy.logwarn("无法计算世界坐标")
+                else:
+                    rospy.logwarn_throttle(5.0, "缺少位姿或相机内参信息，无法计算世界坐标")
+                
+                # 根据检测来源显示不同的日志信息（备用，如果没有世界坐标）
                 source = candidate.get('source', 'cv')
                 if source == 'yolo12':
-                    rospy.loginfo(f"白色正方形降落平台通过yolo12备用检测在 {candidate['center']} 位置，置信度为 {candidate['total_score']:.2f}")
+                    rospy.logdebug(f"白色正方形降落平台通过yolo12备用检测在 {candidate['center']} 位置，置信度为 {candidate['total_score']:.2f}")
                 else:
-                    rospy.loginfo(f"白色正方形降落平台通过CV检测在 {candidate['center']} 位置，得分为 {candidate['total_score']:.2f}")
+                    rospy.logdebug(f"白色正方形降落平台通过CV检测在 {candidate['center']} 位置，得分为 {candidate['total_score']:.2f}")
             else:
                 if self.should_use_yolo_backup():
                     rospy.logwarn(f"[Frame {frame_id}] CV检测（超时）和yolo12备用都未检测到白色正方形降落平台")
@@ -597,6 +645,15 @@ class CamouflagePatternDetector:
     
     def run(self):
         rospy.loginfo("白色正方形检测器正在运行...")
+        rospy.loginfo("话题发布：")
+        rospy.loginfo("  - 像素坐标: /landing_target_camo")
+        rospy.loginfo("  - 世界坐标: /landing_target_camo/world_coord")
+        rospy.loginfo("  - 调试图像: /landing_debug_camo")
+        rospy.loginfo("话题订阅：")
+        rospy.loginfo("  - 图像: /iris_0/camera/image_raw")
+        rospy.loginfo("  - 位姿: /iris_0/mavros/local_position/pose")
+        rospy.loginfo("  - 相机内参: /iris_0/camera/camera_info")
+        rospy.loginfo("  - YOLO备用检测: /yolo12/pixel_position/white")
         rospy.spin()
 
     def check_corner_angles(self, points):
@@ -779,6 +836,139 @@ class CamouflagePatternDetector:
             rospy.logwarn(f"[Frame {frame_id}] 平滑处理警告: 总权重为0，无法进行平滑")
         
         return current_detection
+
+    def pose_callback(self, msg):
+        """位姿回调函数"""
+        self.current_pose = msg
+        
+    def camera_info_callback(self, msg):
+        """相机内参回调函数"""
+        self.camera_info = msg
+
+    def pixel_to_world_coordinate(self, pixel_x, pixel_y, pose, camera_info):
+        """将像素坐标转换为世界坐标（假设物体在地面上，Z=0）"""
+        if camera_info is None or pose is None:
+            return None
+        
+        try:
+            # 记录开始时间用于超时检测
+            start_time = rospy.Time.now()
+            
+            # 第一步：计算物体相对于相机坐标系的齐次坐标
+            # 获取相机内参
+            fx = camera_info.K[0]  # 焦距x
+            fy = camera_info.K[4]  # 焦距y
+            cx = camera_info.K[2]  # 光心x
+            cy = camera_info.K[5]  # 光心y
+            
+            # 将像素坐标转换为相机坐标系的齐次坐标（向右为x轴正方向，向下为y轴正方向）
+            x0 = (pixel_x - cx) / fx
+            y0 = (pixel_y - cy) / fy
+            # 相机坐标系下的齐次坐标
+            camera_point = np.array([x0, y0, 1.0])
+            
+            # 第二步：使用TF2将相机坐标系的两个点转换到地图坐标系
+            # 获取从相机坐标系到地图坐标系的变换
+            try:
+                # 首先尝试获取最新的变换（非阻塞）
+                if self.tf_buffer.can_transform('map', self.camera_frame_id, rospy.Time(0), rospy.Duration(0.01)):
+                    transform = self.tf_buffer.lookup_transform(
+                        'map',  # 目标坐标系
+                        self.camera_frame_id,  # 源坐标系
+                        rospy.Time(0),  # 最新的变换
+                        rospy.Duration(0.1)  # 较短的超时时间
+                    )
+                else:
+                    # 如果最新变换不可用，尝试稍早的时间戳
+                    lookup_time = rospy.Time.now() - rospy.Duration(0.2)
+                    if self.tf_buffer.can_transform('map', self.camera_frame_id, lookup_time, rospy.Duration(0.01)):
+                        transform = self.tf_buffer.lookup_transform(
+                            'map',  # 目标坐标系
+                            self.camera_frame_id,  # 源坐标系
+                            lookup_time,  # 使用稍早的时间戳
+                            rospy.Duration(0.1)  # 较短的超时时间
+                        )
+                    else:
+                        rospy.logwarn_throttle(5.0, f"TF变换不可用: map -> {self.camera_frame_id}")
+                        return None
+                    
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+                rospy.logwarn_throttle(5.0, f"无法获取TF变换: {e}")
+                return None
+            
+            # 检查是否超时
+            elapsed_time = (rospy.Time.now() - start_time).to_sec()
+            if elapsed_time > 0.5:  # 500ms超时
+                rospy.logwarn(f"TF查找耗时过长: {elapsed_time:.2f}秒")
+            
+            # 定义相机坐标系中的两个点
+            # 点1：相机光心 (0, 0, 0)
+            point1_camera = np.array([0.0, 0.0, 0.0, 1.0])  # 齐次坐标
+            # 点2：物体在相机坐标系中的位置 (x0, y0, 1)
+            point2_camera = np.array([x0, y0, 1.0, 1.0])  # 齐次坐标
+            
+            # 将变换转换为4x4矩阵
+            transform_matrix = self.transform_to_matrix(transform)
+            
+            # 将两个点转换到地图坐标系
+            point1_map = transform_matrix @ point1_camera
+            point2_map = transform_matrix @ point2_camera
+            
+            # 转换为3D点（去除齐次坐标的最后一维）
+            point1_map_3d = point1_map[:3]
+            point2_map_3d = point2_map[:3]
+            
+            # 第三步：计算直线与地面(z=0)的交点
+            # 直线方程：P = point1_map_3d + t * (point2_map_3d - point1_map_3d)
+            # 地面方程：z = 0
+            
+            direction = point2_map_3d - point1_map_3d
+            
+            # 检查直线是否平行于地面
+            if abs(direction[2]) < 1e-6:
+                rospy.logwarn_throttle(1.0, "直线平行于地面，无法计算交点")
+                return None
+            
+            # 求解参数t使得 point1_map_3d[2] + t * direction[2] = 0
+            t = -point1_map_3d[2] / direction[2]
+            
+            # 检查交点是否在射线的正方向上
+            if t < 0:
+                rospy.logwarn_throttle(1.0, "交点在相机后方")
+                return None
+            
+            # 计算交点
+            intersection_point = point1_map_3d + t * direction
+            intersection_point[2] = 0.0  # 确保Z坐标为0
+            
+            # 记录总处理时间
+            total_time = (rospy.Time.now() - start_time).to_sec()
+            if total_time > 0.1:  # 100ms以上记录警告
+                rospy.logwarn_throttle(2.0, f"坐标转换耗时: {total_time:.3f}秒")
+            
+            return intersection_point
+            
+        except Exception as e:
+            rospy.logerr(f"坐标转换失败: {e}")
+            import traceback
+            rospy.logerr(f"错误堆栈: {traceback.format_exc()}")
+            return None
+    
+    def transform_to_matrix(self, transform):
+        """将TF2变换转换为4x4变换矩阵"""
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        
+        # 从四元数创建旋转矩阵
+        quaternion = [rotation.x, rotation.y, rotation.z, rotation.w]
+        rotation_matrix = quaternion_matrix(quaternion)
+        
+        # 设置平移
+        rotation_matrix[0, 3] = translation.x
+        rotation_matrix[1, 3] = translation.y
+        rotation_matrix[2, 3] = translation.z
+        
+        return rotation_matrix
 
 if __name__ == '__main__':
     try:
