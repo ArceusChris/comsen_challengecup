@@ -176,11 +176,11 @@ class MultirotorControl:
         self.MAX_LINEAR = MAX_LINEAR
         
         # 视觉降落相关参数
-        self.image_width = 1024
-        self.image_height = 576
-        self.camera_center_x = self.image_width / 2
-        self.camera_center_y = self.image_height / 2
-        
+        self.image_width = 0.0
+        self.image_height = 0.0
+        self.camera_center_x = 0.0
+        self.camera_center_y = 0.0
+
         # PID控制参数
         self.kp_x = 2.0    # X轴比例增益
         self.ki_x = 0.0      # X轴积分增益
