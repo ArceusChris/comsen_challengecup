@@ -187,8 +187,8 @@ class CamouflagePatternDetector:
             area = cv2.contourArea(contour)
             
             # 面积过滤
-            # if area < expected_min_area or area > expected_max_area:
-            #     continue
+            if area < 10:
+                 continue
             
             contours_after_area_filter += 1
             
