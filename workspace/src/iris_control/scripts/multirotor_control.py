@@ -260,6 +260,11 @@ class MultirotorControl:
         
         # 打印当前PID参数
         self._print_current_parameters()
+        
+    def _drone_pose_callback(self, msg):
+        """无人机位姿回调函数"""
+        self.current_drone_pose = msg
+
 
     def _print_current_parameters(self):
         """打印当前PID参数"""
