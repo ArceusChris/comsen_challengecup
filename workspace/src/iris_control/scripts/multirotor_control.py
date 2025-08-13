@@ -1046,7 +1046,7 @@ def main():
         return
     
     multirotor_control.controller.current_iris_status.data = 4
-    multirotor_control.land(altitude=10)
+    
     success = multirotor_control.visual_landing(target_type="landing_target_camo/world_coord")
     if not success:
         print("世界坐标降落失败，执行基础降落")
