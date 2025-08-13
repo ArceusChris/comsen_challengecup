@@ -2,17 +2,17 @@
 # -*- coding: utf-8 -*-
 
 """
-多旋翼无人机控制节点 - 集成视觉降落功能
+多旋翼无人机控制节点 - 集成世界坐标降落功能
 
 该模块提供了完整的多旋翼无人机控制功能，包括：
 1. 基础飞行控制（起飞、移动、悬停、降落）
 2. 路径规划和导航
-3. 视觉精确降落控制
+3. 基于世界坐标的精确降落控制
 4. PID控制算法
 5. 任务执行
 6. 动态PID参数调整
 
-视觉降落功能支持多种目标类型：
+世界坐标降落功能支持多种目标类型：
 - landing_target_camo: 迷彩降落目标
 - landing_target_red: 红色降落目标
 - landing_target_custom: 自定义降落目标
@@ -21,10 +21,10 @@
 1. 基础模式：
    python3 multirotor_control.py <multirotor_type> <multirotor_id> <control_type>
 
-2. 视觉降落演示：
+2. 世界坐标降落演示：
    python3 multirotor_control.py <multirotor_type> <multirotor_id> <control_type> demo_visual_landing [target_type]
 
-3. 在代码中使用视觉降落：
+3. 在代码中使用世界坐标降落：
    multirotor_control.visual_landing(target_type="landing_target_camo")
    
    或者在execute_mission中启用：
@@ -39,7 +39,7 @@
 - ~pid_z/kp, ~pid_z/ki, ~pid_z/kd: Z轴PID参数
 - ~max_vel_xy: XY方向最大速度 (m/s)
 - ~max_vel_z: Z方向最大速度 (m/s)
-- ~landing_threshold: 降落像素误差阈值
+- ~landing_threshold: 降落世界坐标误差阈值 (m)
 - ~min_altitude: 最小安全高度 (m)
 - ~descent_rate: 降落速率 (m/s)
 - ~target_timeout: 目标丢失超时时间 (s)
@@ -55,8 +55,12 @@ rosparam set /multirotor_control_node/max_vel_xy 2.0
 rosparam set /multirotor_control_node/max_vel_z 1.5
 
 # 调整降落参数
-rosparam set /multirotor_control_node/landing_threshold 25
+rosparam set /multirotor_control_node/landing_threshold 1.0
 rosparam set /multirotor_control_node/descent_rate 0.3
+
+硬件要求：
+- 无人机位姿话题: /iris_0/mavros/local_position/pose (PoseStamped)
+- 目标世界坐标话题: /<target_type> (Point)
 """
 
 import sys
@@ -80,7 +84,7 @@ import math
 import time
 import numpy as np
 import rospy
-from geometry_msgs.msg import PoseStamped, Twist, PointStamped, Pose
+from geometry_msgs.msg import PoseStamped, Twist, PointStamped, Pose, Point
 from std_msgs.msg import Int8, String, Bool, Float64
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, CommandTOL, SetMode
@@ -175,12 +179,10 @@ class MultirotorControl:
         self.controller = controller
         self.MAX_LINEAR = MAX_LINEAR
         
-        # 视觉降落相关参数
-        self.image_width = 0.0
-        self.image_height = 0.0
-        self.camera_center_x = 0.0
-        self.camera_center_y = 0.0
-
+        # 世界坐标降落相关参数
+        self.current_drone_pose = PoseStamped()
+        self.target_world_position = Point()
+        
         # PID控制参数
         self.kp_x = 2.0    # X轴比例增益
         self.ki_x = 0.0      # X轴积分增益
@@ -195,7 +197,7 @@ class MultirotorControl:
         self.kd_z = 0.0     # Z轴微分增益
 
         # 降落参数
-        self.landing_threshold = 0.2    # 像素误差阈值
+        self.landing_threshold = 1.0    # 世界坐标误差阈值(米)
         self.min_altitude = 0.8        # 最小安全高度
         self.descent_rate = 5.0      # 降落速率 m/s
         self.max_vel_xy = 5.0          # XY方向最大速度
@@ -205,15 +207,18 @@ class MultirotorControl:
         # 其他控制参数也从ROS参数服务器获取
         self.max_vel_xy = rospy.get_param('~max_vel_xy', 5.0)          # XY方向最大速度
         self.max_vel_z = rospy.get_param('~max_vel_z', 1.0)            # Z方向最大速度
-        self.landing_threshold = rospy.get_param('~landing_threshold', 30)    # 像素误差阈值
+        self.landing_threshold = rospy.get_param('~landing_threshold', 1.0)    # 世界坐标误差阈值(米)
         self.min_altitude = rospy.get_param('~min_altitude', 0.65)            # 最小安全高度
         self.descent_rate = rospy.get_param('~descent_rate', 1.0)            # 降落速率 m/s
         self.target_timeout = rospy.get_param('~target_timeout', 2.0)         # 目标丢失超时时间(秒)
         
-        # 视觉降落状态变量
+        # 世界坐标降落状态变量
         self.target_detected = False
-        self.target_position = PointStamped()
+        self.target_world_position = Point()
         self.last_target_time = rospy.Time.now()
+        
+        # 无人机位姿订阅器
+        self.drone_pose_sub = rospy.Subscriber('/iris_0/mavros/local_position/pose', PoseStamped, self._drone_pose_callback)
         
         # 降落状态机
         self.LANDING_STATES = {
@@ -242,7 +247,7 @@ class MultirotorControl:
             windup_limit=0.5
         )
         
-        # 视觉降落相关话题订阅器
+        # 世界坐标降落相关话题订阅器
         self.target_sub = None
         self.landing_enabled = False
         
@@ -264,7 +269,7 @@ class MultirotorControl:
         rospy.loginfo(f"Z轴PID: Kp={self.kp_z:.3f}, Ki={self.ki_z:.3f}, Kd={self.kd_z:.3f}")
         rospy.loginfo(f"最大XY速度: {self.max_vel_xy:.2f} m/s")
         rospy.loginfo(f"最大Z速度: {self.max_vel_z:.2f} m/s")
-        rospy.loginfo(f"降落阈值: {self.landing_threshold} px")
+        rospy.loginfo(f"降落阈值: {self.landing_threshold:.2f} m")  # 修改为米单位
         rospy.loginfo(f"最小高度: {self.min_altitude:.2f} m")
         rospy.loginfo(f"下降速率: {self.descent_rate:.2f} m/s")
         rospy.loginfo("==================")
@@ -610,14 +615,14 @@ class MultirotorControl:
 
     def visual_landing(self, target_type="landing_target_camo"):
         """
-        基于视觉的精确降落控制器
+        基于世界坐标的精确降落控制器
         Args:
             target_type: 降落目标类型，可选值：
                         "landing_target_camo" - 迷彩降落目标
                         "landing_target_red" - 红色降落目标
                         "landing_target_custom" - 自定义降落目标
         """
-        print(f"开始视觉降落，目标类型: {target_type}")
+        print(f"开始世界坐标降落，目标类型: {target_type}")
         
         # 手动更新参数确保使用最新的PID配置
         self.manual_update_parameters()
@@ -671,14 +676,14 @@ class MultirotorControl:
         
         self.target_sub = rospy.Subscriber(
             f'/{target_type}', 
-            PointStamped, 
+            Point, 
             self._target_callback
         )
         print(f"已订阅视觉目标话题: /{target_type}")
     
     def _target_callback(self, msg):
-        """目标检测回调函数"""
-        self.target_position = msg
+        """目标世界坐标回调函数"""
+        self.target_world_position = msg
         self.target_detected = True
         self.last_target_time = rospy.Time.now()
     
@@ -724,31 +729,35 @@ class MultirotorControl:
             print(f"发布位姿信息时出现错误: {e}")
             return False
 
-    def _calculate_pixel_error(self):
-        """计算像素误差"""
+    def _calculate_world_error(self):
+        """计算世界坐标误差"""
         if not self.target_detected:
             return None, None, None
             
-        # 计算目标中心与图像中心的偏差
-        error_x = self.target_position.point.x - self.camera_center_x
-        error_y = self.target_position.point.y - self.camera_center_y
+        # 获取无人机当前位置
+        drone_x = self.current_drone_pose.pose.position.x
+        drone_y = self.current_drone_pose.pose.position.y
+        
+        # 获取目标世界坐标
+        target_x = self.target_world_position.x
+        target_y = self.target_world_position.y
+        
+        # 计算误差
+        error_x = target_x - drone_x
+        error_y = target_y - drone_y
         
         # 计算总误差距离
         error_distance = math.sqrt(error_x**2 + error_y**2)
         
         return error_x, error_y, error_distance
     
-    def _pixel_to_velocity_pid(self, error_x, error_y):
-        """使用PID控制器将像素误差转换为速度命令"""
+    def _world_error_to_velocity_pid(self, error_x, error_y):
+        """使用PID控制器将世界坐标误差转换为速度命令"""
         current_time = rospy.Time.now()
         
-        # 将像素误差归一化到 [-1, 1] 范围
-        norm_error_x = error_x / (self.image_width / 2)
-        norm_error_y = error_y / (self.image_height / 2)
-        
-        # 使用PID控制器计算速度
-        vel_x = -self.pid_y.update(norm_error_y, current_time)
-        vel_y = -self.pid_x.update(norm_error_x, current_time)
+        # 直接使用世界坐标误差进行PID控制
+        vel_x = self.pid_x.update(error_x, current_time)
+        vel_y = self.pid_y.update(error_y, current_time)
         
         return vel_x, vel_y
     
@@ -776,15 +785,15 @@ class MultirotorControl:
         return False
     
     def _execute_visual_landing_state_machine(self):
-        """执行视觉降落状态机"""
+        """执行世界坐标降落状态机"""
         if not self.landing_enabled:
             return
             
         # 检查目标超时
         target_timeout = self._check_target_timeout()
         
-        # 计算像素误差
-        error_x, error_y, error_distance = self._calculate_pixel_error()
+        # 计算世界坐标误差
+        error_x, error_y, error_distance = self._calculate_world_error()
         
         # 获取当前高度
         position = self.controller.get_position_xyz()
@@ -803,7 +812,7 @@ class MultirotorControl:
                 
         elif self.current_landing_state == self.LANDING_STATES['TRACKING']:
             if error_distance is not None:
-                print(f"跟踪目标中，误差距离: {error_distance:.1f}px")
+                print(f"跟踪目标中，误差距离: {error_distance:.2f}m")
             else:
                 print("跟踪目标中，等待目标检测...")
             
@@ -812,18 +821,17 @@ class MultirotorControl:
                 self.pid_x.reset()
                 self.pid_y.reset()
                 print("目标丢失，切换到搜索状态")
-                return
                 
             if error_distance is not None:
                 # 使用PID控制器计算XY方向速度
-                vel_x, vel_y = self._pixel_to_velocity_pid(error_x, error_y)
+                vel_x, vel_y = self._world_error_to_velocity_pid(error_x, error_y)
                 
                 # 应用速度命令
                 self.controller.current_twist.linear.x = vel_x
                 self.controller.current_twist.linear.y = vel_y
                 self.controller.current_twist.linear.z = 0.0
                 
-                print(f"跟踪调整: vx={vel_x:.3f}, vy={vel_y:.3f}, 误差: x={error_x:.1f}px, y={error_y:.1f}px")
+                print(f"跟踪调整: vx={vel_x:.3f}, vy={vel_y:.3f}, 误差: x={error_x:.2f}m, y={error_y:.2f}m")
                 
                 # 判断是否可以开始下降
                 if error_distance < self.landing_threshold and current_altitude > 0.65:
@@ -832,7 +840,7 @@ class MultirotorControl:
                     
         elif self.current_landing_state == self.LANDING_STATES['DESCENDING']:
             if error_distance is not None:
-                print(f"下降中，高度: {current_altitude:.2f}m，目标误差: {error_distance:.1f}px")
+                print(f"下降中，高度: {current_altitude:.2f}m，目标误差: {error_distance:.2f}m")
             else:
                 print(f"下降中，高度: {current_altitude:.2f}m，等待目标检测...")
             
@@ -845,8 +853,8 @@ class MultirotorControl:
                 return
                 
             if error_distance is not None:
-                # 使用PID控制器计算XY方向速度（下降时降低响应强度）
-                vel_x, vel_y = self._pixel_to_velocity_pid(error_x, error_y)
+                # 使用PID控制器计算XY方向速度（下降时保持跟踪）
+                vel_x, vel_y = self._world_error_to_velocity_pid(error_x, error_y)
                 
                 # 使用PID控制器控制下降速度
                 target_altitude = max(0.65, current_altitude - 0.5)
@@ -922,7 +930,7 @@ class PoseNode:
             print("固定翼飞机还在起飞")
 
 def demo_visual_landing():
-    """演示视觉降落功能的示例函数"""
+    """演示世界坐标降落功能的示例函数"""
     if len(sys.argv) < 4:
         print("用法: python3 multirotor_control.py <multirotor_type> <multirotor_id> <control_type> [demo_visual_landing]")
         return
@@ -935,7 +943,7 @@ def demo_visual_landing():
     controller = DroneController(multirotor_type, multirotor_id, control_type)
     multirotor_control = MultirotorControl(controller)
     
-    print("=== 视觉降落演示 ===")
+    print("=== 世界坐标降落演示 ===")
     
     # 步骤1：起飞到合适高度
     print("1. 起飞到20米高度...")
@@ -946,8 +954,8 @@ def demo_visual_landing():
     landing_area_position = [0, 0]  # 可以根据需要调整位置
     multirotor_control.go_to_position(landing_area_position, stop=True)
     
-    # 步骤3：执行视觉降落
-    print("3. 开始视觉降落...")
+    # 步骤3：执行世界坐标降落
+    print("3. 开始世界坐标降落...")
     
     # 可以选择不同的目标类型：
     # "landing_target_camo" - 迷彩目标
@@ -962,13 +970,13 @@ def demo_visual_landing():
     success = multirotor_control.visual_landing(target_type=target_type)
     
     if success:
-        print("4. 视觉降落成功完成！")
+        print("4. 世界坐标降落成功完成！")
         multirotor_control.controller.current_iris_status.data = 8  # 任务完成状态
     else:
-        print("4. 视觉降落失败，执行基础降落...")
+        print("4. 世界坐标降落失败，执行基础降落...")
         multirotor_control.land(altitude=0.65)
     
-    print("=== 视觉降落演示完成 ===")
+    print("=== 世界坐标降落演示完成 ===")
 
 def main():
     # 过滤掉ROS的重映射参数
@@ -1036,9 +1044,9 @@ def main():
     multirotor_control.land(altitude=10)
     success = multirotor_control.visual_landing(target_type="landing_target_camo/world_coord")
     if not success:
-        print("视觉降落失败，执行基础降落")
+        print("世界坐标降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
-    print("视觉降落成功，准备移动到第一人位置")
+    print("世界坐标降落成功，准备移动到第一人位置")
 
     multirotor_control.controller.current_iris_status.data = 5
     multirotor_control.takeoff(altitude=20)
@@ -1050,9 +1058,9 @@ def main():
     multirotor_control.controller.current_iris_status.data = 6
     success = multirotor_control.visual_landing(target_type="landing_target_red/world_coord")
     if not success:
-        print("视觉降落失败，执行基础降落")
+        print("世界坐标降落失败，执行基础降落")
         multirotor_control.land(altitude=0.65)
-    print("视觉降落成功，准备返回起点")
+    print("世界坐标降落成功，准备返回起点")
 
     multirotor_control.controller.current_iris_status.data = 7 
     multirotor_control.takeoff(altitude=20)
