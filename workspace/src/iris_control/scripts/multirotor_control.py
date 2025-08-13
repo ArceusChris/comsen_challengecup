@@ -199,7 +199,7 @@ class MultirotorControl:
         # 降落参数
         self.landing_threshold = 1.0    # 世界坐标误差阈值(米)
         self.min_altitude = 0.8        # 最小安全高度
-        self.descent_rate = 5.0      # 降落速率 m/s
+        self.descent_rate = 1.0      # 降落速率 m/s
         self.max_vel_xy = 5.0          # XY方向最大速度
         self.max_vel_z = 1.0           # Z方向最大速度
         self.target_timeout = 1.0     # 目标丢失超时时间(秒)
@@ -260,7 +260,7 @@ class MultirotorControl:
         
         # 打印当前PID参数
         self._print_current_parameters()
-        
+
     def _drone_pose_callback(self, msg):
         """无人机位姿回调函数"""
         self.current_drone_pose = msg
