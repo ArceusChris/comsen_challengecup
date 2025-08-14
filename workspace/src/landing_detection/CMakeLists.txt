@@ -36,9 +36,8 @@ include_directories(
 
 # Install Python executables
 catkin_install_python(PROGRAMS
-  scripts/landing_detection.py
-  scripts/simple_landing_detector.py
-  scripts/test_landing_detection.py
+  scripts/camouflage_pattern_detector.py
+  scripts/red_pattern_detector.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

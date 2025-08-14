@@ -65,7 +65,7 @@ def main():
     parser = argparse.ArgumentParser(description='YOLOv12推理脚本，与ROS桥接节点通信')
     parser.add_argument('--model', type=str, default='yolov12n.pt', help='YOLO模型路径')
     parser.add_argument('--device', type=str, default='cpu', help='运行推理的设备 (cpu/cuda)')
-    parser.add_argument('--conf', type=float, default=0.45, help='置信度阈值')
+    parser.add_argument('--conf', type=float, default=0.6, help='置信度阈值')
     parser.add_argument('--iou', type=float, default=0.45, help='IOU阈值')
     parser.add_argument('--sender-port', type=int, default=5555, help='从桥接节点接收图像的端口(与桥接节点的sender_port对应)')
     parser.add_argument('--receiver-port', type=int, default=5556, help='向桥接节点发送结果的端口(与桥接节点的receiver_port对应)')

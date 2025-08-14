@@ -26,8 +26,6 @@ include_directories(
 catkin_install_python(PROGRAMS
   scripts/multirotor_control.py
   scripts/drone_control.py
-  scripts/landing.py
-  scripts/test_visual_landing.py
   scripts/vtol_Astar.py
   scripts/vtol_map.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
