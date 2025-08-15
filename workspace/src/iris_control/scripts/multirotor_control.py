@@ -185,21 +185,21 @@ class MultirotorControl:
         
         # PID控制参数
         self.kp_x = 2.0    # X轴比例增益
-        self.ki_x = 0.0      # X轴积分增益
+        self.ki_x = 0.25      # X轴积分增益
         self.kd_x = 0.0     # X轴微分增益
 
         self.kp_y = 2.0     # Y轴比例增益
-        self.ki_y = 0.0      # Y轴积分增益
+        self.ki_y = 0.25      # Y轴积分增益
         self.kd_y = 0.0     # Y轴微分增益
 
         self.kp_z = 4.0     # Z轴比例增益
-        self.ki_z = 0.0     # Z轴积分增益
+        self.ki_z = 0.7     # Z轴积分增益
         self.kd_z = 0.0     # Z轴微分增益
 
         # 降落参数
-        self.landing_threshold = 1.0    # 世界坐标误差阈值(米)
-        self.min_altitude = 0.8        # 最小安全高度
-        self.descent_rate = 1.0      # 降落速率 m/s
+        self.landing_threshold = 0.75    # 世界坐标误差阈值(米)
+        self.min_altitude = 0.5        # 最小安全高度
+        self.descent_rate = 0.7      # 降落速率 m/s
         self.max_vel_xy = 5.0          # XY方向最大速度
         self.max_vel_z = 1.0           # Z方向最大速度
         self.target_timeout = 1.0     # 目标丢失超时时间(秒)
@@ -651,6 +651,7 @@ class MultirotorControl:
                 # 检查是否完成降落
                 if self.current_landing_state == self.LANDING_STATES['LANDED']:
                     print("视觉降落完成")
+                    self._publish_landing_pose(target_type)
                     break
                     
                 rate.sleep()
@@ -705,7 +706,7 @@ class MultirotorControl:
         """根据目标类型发布降落完成后的位姿信息"""
         try:
             # 获取当前位姿信息
-            pose_info, _ = self.controller.get_current_position()
+            pose_info = self.current_drone_pose
             if pose_info is None:
                 print("无法获取当前位姿信息，无法发布位姿")
                 return False
@@ -716,11 +717,11 @@ class MultirotorControl:
             pose_msg.orientation = pose_info.pose.orientation
             
             # 根据目标类型选择发布话题
-            if target_type == "landing_target_red":
+            if target_type == "landing_target_red/world_coord":
                 self.bad_man_pose_pub.publish(pose_msg)
                 print(f"已发布危重病人位姿到 /zhihang2025/iris_bad_man/pose")
                 print(f"位置: x={pose_msg.position.x:.3f}, y={pose_msg.position.y:.3f}, z={pose_msg.position.z:.3f}")
-            elif target_type == "landing_target_camo":
+            elif target_type == "landing_target_camo/world_coord":
                 self.healthy_man_pose_pub.publish(pose_msg)
                 print(f"已发布健康人员位姿到 /zhihang2025/iris_healthy_man/pose")
                 print(f"位置: x={pose_msg.position.x:.3f}, y={pose_msg.position.y:.3f}, z={pose_msg.position.z:.3f}")
@@ -874,9 +875,9 @@ class MultirotorControl:
                 self.controller.current_twist.linear.z = vel_z
                 
                 print(f"下降调整: vx={vel_x:.3f}, vy={vel_y:.3f}, vz={vel_z:.3f}")
-                
-                # 判断是否已经降落到目标高度（0.65米）
-                if current_altitude <= 0.65:
+
+                # 判断是否已经降落到目标高度（0.5米）
+                if current_altitude <= 0.5:
                     # 停止所有运动
                     self.controller.current_twist.linear.x = 0.0
                     self.controller.current_twist.linear.y = 0.0
