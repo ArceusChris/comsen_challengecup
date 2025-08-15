@@ -75,3 +75,5 @@ cd ~/comsen_challengecup/workspace
 catkin build && source devel/setup.bash
 roslaunch main.launch
 ```
+
+本项目已在<https://github.com/ArceusChris/comsen_challengecup>开源
